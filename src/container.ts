@@ -1,5 +1,6 @@
 import { type DBManager, getDBManager } from "@/db/db.manager";
 import { createAuthModule } from "@/domains/platform/auth/auth.module";
+import { createUserModule } from "@/domains/platform/user/user.module";
 
 /**
  * Dependencies every domain module receives. Only `db` lives here — it is the
@@ -30,9 +31,11 @@ export function buildContainer(db: DBManager) {
   const deps: ModuleDeps = { db };
 
   const auth = createAuthModule(deps);
+  const user = createUserModule(deps);
 
   return {
     ...auth,
+    ...user,
   };
 }
 

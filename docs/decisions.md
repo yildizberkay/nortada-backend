@@ -4,6 +4,10 @@
 
 ---
 
+## D-008 — Anonim→Clerk merge: tercihler taşınmaz, gerçek veri transaction'lı taşınır
+**Karar:** Merge branch-1 (upgrade-in-place, aynı `user.id`) her şeyi otomatik korur. Branch-2 (hedefte zaten Clerk hesabı) anonim cihazın **profil tercihlerini taşımaz** — hedef hesabın profili kazanır; anonim `user_profile` satırı retired user'a bağlı zararsız ölü veri kalır (asla sorgulanmaz). Kaybedilecek **gerçek kullanıcı verisi** (favoriler RFC-0004, aktiviteler RFC-0006) var olunca merge, tek transaction açan orkestrasyona döner: her domain repo'su `reassignOwner(fromUserId, toUserId, tx)` sunar, `markMergedInto(tx)` ile atomik koşar.
+**Neden:** Profil = cihaz-yerel kişiselleştirme; başka cihazda kurulu hesabı olan kullanıcı o hesabın tercihlerini devralmalı (doğru ürün davranışı). Tercih-atmak için cross-domain transaction altyapısı erken olur; kaybı önemli olan veri (favori/seans) gelince kurulur. İki bağımsız mimari review de bu tercihi onayladı. Detay + gerekçe: [[otonom-kararlar]] §18.
+
 ## D-007 — Launch beachhead: Türkiye Ege (global mimari, bölgesel küratörlük)
 **Karar:** Mimari **gün 1'den global** (OSM global, spot şeması global, her bölgeden spot toplanabilir). Ama **küratörlü launch kalitesi Türkiye Ege kıyısından başlar** (Çeşme/Alaçatı + Gökova/Akyaka kite + Urla + Bodrum/Datça) + İstanbul/Marmara; sonra bölge bölge genişler: Ege → Yunanistan → Tarifa/İspanya → Mısır/Kızıldeniz → global.
 **Neden (analitik):** (1) Ekip İstanbul'da → en sıkı feedback döngüsü. (2) Alaçatı dünyanın en iyi 7 windsurf merkezinden biri, her Ağustos **PWA Dünya Kupası** orada, ASPC dünya top-5/Avrupa top-3 → marquee spot Avrupalı gezgin sürücüleri de çeker, yani Türkiye-first beachhead bile "global" hedefe dokunur. (3) Yoğunluk > nicelik: ilk kullanıcılar thin global kapsama yerine iyi küratörlü mükemmel deneyim alır. (4) Genişleme yolu net: en yoğun Avrupa/Akdeniz pazarları (Avrupa kite/windsurf pazarının ~%35-42'si) sırayla eklenir. Kullanıcı "global olacak" dedi → mimari global; "kalite>nicelik/beachhead" → küratörlük Ege'den. İkisi böyle uzlaşır.

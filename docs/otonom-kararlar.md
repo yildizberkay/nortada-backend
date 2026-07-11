@@ -270,18 +270,46 @@ kimliksiz `/anonymous` sınırsız INSERT + token mint idi (principal-review HIG
 çok instance'a çıkınca Postgres/Redis tabanlı limiter'a geçmeli (bucket paylaşımı).
 Şimdilik tek instance varsayımı.
 
-## 18. Merge cross-domain transaction planı (RFC-0006'da) ⏸️ (review-driven)
+## 18. Merge'de veri taşıma — TERCİHLER taşınmaz, VERİ taşınacak ✅ (review-driven, RFC-0003'te netleşti)
 
-**Karar:** Bugün user tablosu dışında sahiplenilen kayıt yok, bu yüzden branch-2
-tek `UPDATE` (kendi başına atomik). İlk kullanıcı-sahipli domain (RFC-0006
-activity) gelince merge, **tek transaction** açan bir orkestrasyona dönecek:
-her domain repo'su `reassignOwner(fromUserId, toUserId, tx)` sunacak ve
-`markMergedInto(tx)` ile aynı tx içinde atomik koşacak.
+**Karar:** Anonim→Clerk merge'inde:
+- **Branch-1** (upgrade-in-place, aynı `user.id`) → profil/her şey **otomatik korunur** (satır aynı).
+- **Branch-2** (hedefte zaten Clerk hesabı var) → anonim cihazın **profil tercihleri
+  taşınMAZ**; hedef hesabın kendi profili kazanır. Anonim `user_profile` satırı
+  retired user'a bağlı **ölü veri** kalır (asla sorgulanmaz — auth hep live user'a
+  çözülür, `user_profile.userId` unique, FK `ON DELETE no action`). Zararsız.
+- **Gerçek VERİ** (favoriler RFC-0004, aktiviteler RFC-0006) → o veri var olunca,
+  merge **tek transaction** açan orkestrasyona dönecek; her domain repo'su
+  `reassignOwner(fromUserId, toUserId, tx)` sunacak, `markMergedInto(tx)` ile atomik.
 
-**Neden:** Reviewer "boundary'yi şimdi kur" dedi; ama ikinci katılımcı yokken
-tek statement'ı transaction'a sarmak no-op abstraction olurdu. Bunun yerine planı
-netleştirdim ve kodda seam'i (repo docstring) işaretledim. RFC-0002 §9'daki
-"transaction'lı merge" ifadesi buna göre güncellendi.
+**Neden (iki reviewer da onayladı):** Profil = cihaz-yerel kişiselleştirme;
+başka cihazda hesabı olan kullanıcı o hesabın tercihlerini devralmalı (doğru ürün
+davranışı). Tercih-atmak için cross-domain transaction altyapısı kurmak erken;
+kaybedilecek gerçek veri (favori/seans) olunca gerekli. Ölü satırlar ileride
+retired-user GC pass'iyle temizlenebilir (küçük teknik borç, not düşüldü).
+Formal ADR: [[decisions]] D-008.
+
+## 20. Profil GET: onboarded marker ✅ (review-driven)
+
+**Karar:** `GET /me/profile` profil satırı yoksa varsayılanları döner ama artık
+`onboarded: false` ile işaretli; satır varsa `onboarded: true`.
+
+**Neden:** Eskiden client/insights "kullanıcı gerçekten windsurf+knots seçti" ile
+"henüz onboard olmadı, bunlar tahmin" ayrımını yapamıyordu (principal-review MEDIUM).
+`onboarded` bunu açık kılar; D-006 birim tercihi ancak `onboarded:true` iken gerçek
+tercih sayılır. Ölü `UserReason.PROFILE_NOT_FOUND` (404 dalı) kaldırıldı.
+
+## 21. Primary sport cardSlots tek kaynak + eşzamanlı PATCH kilidi + `Mps` ✅ (review-driven)
+
+**Karar:** (a) `user_profile.cardSlots` (primary sport) ile `user_sport_profile.cardSlots`
+(override) çift-kaynak sorunu: sport-profile çözümü artık primary sport için
+`user_profile.cardSlots`'u overlay ediyor → iki okuma yolu tutarlı. (b) `updateProfile`
+artık `SELECT … FOR UPDATE` ile repo-transaction içinde (eşzamanlı iki cihazın disjoint
+PATCH'i birbirini ezmesin — lost-update kapandı). Sport-profile PUT tam-değişim
+(full-replace) → onda lost-update yok. (c) `planing/foilingThresholdMs` → `…Mps`
+(milisaniye değil, m/s hız — birim netliği, D-006).
+
+**Neden:** Üçü de principal-architect + convention review MEDIUM/❌ bulguları.
 
 ## 19. Clerk email/displayName hydration → RFC-0003 ⏸️
 
