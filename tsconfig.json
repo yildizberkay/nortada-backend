@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    /* Language / libs */
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+    "module": "es2022",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+
+    /* JS interop */
+    "allowJs": true,
+    "checkJs": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Emit — none; tsup/tsx handle transpile */
+    "noEmit": true,
+    "isolatedModules": false,
+
+    /* Strictness */
+    "strict": true,
+    "strictNullChecks": true,
+    "skipLibCheck": true,
+
+    "types": ["node"],
+
+    "baseUrl": ".",
+    "paths": {
+      "@/types": ["src/types.ts"],
+      "@/*": ["src/*"],
+      "@tests/*": ["tests/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/*.ts"],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+}

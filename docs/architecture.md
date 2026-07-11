@@ -36,7 +36,7 @@ API değerleri **m/s, metre, °C** döner; knot/km/NM/°F dönüşümü client't
 - **Trigger.dev:** `<name>.{schema,task,trigger}.ts`; task `initializeForTrigger()` + `createDBManagerForTrigger()` + `buildContainer(db)` + `finally finalizeTrigger()`. Service'ten invoke.
 - **Middleware:** cross-cutting header'ı handler okumaz, `c.var`'a yazan middleware olur.
 - **Test:** co-located `<domain>.service.spec.ts`, tüm bağımlılıklar mock, happy+error.
-- **Tooling:** Node 20 ESM, Biome (2-space, lineWidth 80, double quote, import sırası node:→external→`@/`→relative), tsup build, `@/`→`src/`.
+- **Tooling:** Node 22 ESM, Biome (2-space, lineWidth 80, double quote, import sırası node:→external→`@/`→relative), tsup build (`target: node22`), `@/`→`src/`.
 
 ## Naming
 Service `{Domain}Service`/`<name>.service.ts` · Repository `{Domain}Repository` · Route export `<domain>Route` · Error `{Domain}Reason` · Tablo `<name>Table` · inferred tip PascalCase tekil. Named export only.

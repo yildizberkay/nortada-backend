@@ -198,7 +198,7 @@ Jest + ts-jest. `testMatch: ["**/*.spec.ts"]`, `clearMocks`/`restoreMocks`. **Co
 
 ## 13. Tooling
 
-Node 20, ESM. Dev `tsx watch`, build `tsup`, lint **Biome** (2-space, lineWidth 80, double quote, import sırası: `node:` → external → `@/` → same-domain relative). Type check `tsc --project tsconfig.check.json`. Import yönü `scripts/check-import-direction.sh`. Path alias `@/` → `src/`; domain'ler arası `@/`, domain içi relative. Her değişiklik gate'i: `lint:biome:fix` → `lint:type` → `test` → değişen service'lere test yaz.
+Node 22, ESM (Splash tooling: `engines >=22`, tsup `target: node22`). Dev `tsx watch`, build `tsup`, lint **Biome** (2-space, lineWidth 80, double quote, import sırası: `node:` → external → `@/` → same-domain relative). Type check `tsc --project tsconfig.check.json`. Import yönü `scripts/check-import-direction.sh`. Path alias `@/` → `src/`; domain'ler arası `@/`, domain içi relative. Her değişiklik gate'i: `lint:biome:fix` → `lint:type` → `test` → değişen service'lere test yaz.
 
 ## 14. Yeni domain ekleme checklist'i
 

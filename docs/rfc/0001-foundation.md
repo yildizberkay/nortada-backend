@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | 0001 |
 | **Başlık** | Proje temeli & mimari |
-| **Status** | 🟡 Draft |
+| **Status** | ✅ Completed |
 | **Step** | 0 |
 | **Depends on** | — |
 | **Domain(ler)** | platform/foundation |
@@ -26,7 +26,8 @@ Referans mimari kanıtlanmış ([[reference/brandscale-architecture]]); onu alı
 `src/db/schema.ts` — tek dosya, tüm tablolar/enum/relations + `dbSchema` export + inferred tipler. Bu RFC'de sadece iskelet: `JsonValue` tipi, boş `dbSchema = {}` (domain'ler ekler), migration pipeline (drizzle-kit). Ortak kolon deseni her tabloda: `id` (integer identity PK) + `uid` (text uuid, API'de görünen) + `createdAt`/`updatedAt`. jsonb kolonlar her zaman `.$type<JsonValue>()`.
 
 ## 5. API yüzeyi
-- `GET /health` — liveness.
+- `GET /health` — liveness (bağımlılık yok, her zaman 200 — DB blip'i restart tetiklemesin).
+- `GET /health/ready` — readiness (`SELECT 1` ile DB erişilebilirliği).
 - Dev'de `GET /openapi.json` + `GET /docs` (Swagger UI, `hono-openapi` + `@hono/swagger-ui`).
 - Route kaydı merkezî: `src/domains/index.ts` → `registerRoutes(app)`; her domain `app.route("/v1/<domain>", <domain>Route)`.
 - Başarı zarfı `{ data }` (`HTTPResponse.success`), hata zarfı `{ error, reason?, message, statusCode }`.
@@ -42,31 +43,35 @@ Brandscale'de tek `ServiceContainer` 40+ lazy getter tutar (private repo / publi
 ```typescript
 // src/domains/feature/spot/spot.module.ts
 import type { ModuleDeps } from "@/container";
-export function createSpotModule({ db, config }: ModuleDeps) {
+export function createSpotModule({ db }: ModuleDeps) {
   const spotRepository = new SpotRepository(db);      // repo domain içinde, dışarı sızmaz
-  const spotService = new SpotService(spotRepository, config);
+  const spotService = new SpotService(spotRepository); // config YOK — service `this.config` (BaseUseCase) okur
   return { spotService };                             // sadece public service'ler dışarı
 }
 ```
 
 ```typescript
 // src/container.ts
-export interface ModuleDeps { db: DBManager; config: Config; /* http, clients... */ }
+export interface ModuleDeps { db: DBManager; }   // sadece db — config global, `this.config` ile okunur
 
 export function buildContainer(db: DBManager) {
-  const config = globalConfig.config;
-  const deps: ModuleDeps = { db, config };
+  const deps: ModuleDeps = { db };
   const user    = createUserModule(deps);
   const spot    = createSpotModule(deps);
   const weather = createWeatherModule(deps);
-  const session = createSessionModule({ ...deps, weatherService: weather.weatherService }); // cross-domain dep AÇIK
-  return { ...user, ...spot, ...weather, ...session };
+  const activity = createActivityModule({ ...deps, weatherService: weather.weatherService }); // cross-domain dep AÇIK
+  return { ...user, ...spot, ...weather, ...activity };
 }
-export const container = buildContainer(getDBManager());        // HTTP singleton
 export type Container = ReturnType<typeof buildContainer>;
+
+// HTTP singleton: LAZY (`getContainer()`), böylece `@/container` import'u yan
+// etkisiz — Trigger worker task modüllerini init'ten önce yüklerken graf
+// kurulmaz. Trigger task'i kendi grafını `buildContainer(taskDb)` ile kurar.
+let _container: Container | undefined;
+export const getContainer = () => (_container ??= buildContainer(getDBManager()));
 ```
 
-Kazanç: (a) tek dev dosya yok — her domain wiring'i kendi içinde; (b) private/public getter soup yok — repo modül içinde kalır, sadece service döner; (c) cross-domain bağımlılık (session→weather) kök'te **açık ve tipli** geçer, gizli global getter yok; (d) Trigger için `buildContainer(triggerDb)` taze graf kurar. Kural: constructor'lar ağır iş yapmaz / build anında `config`/`db`'ye dokunmaz (brandscale'deki gibi). Route/middleware `import { container }`; Trigger task `buildContainer(dbManager)`.
+Kazanç: (a) tek dev dosya yok — her domain wiring'i kendi içinde; (b) private/public getter soup yok — repo modül içinde kalır, sadece service döner; (c) cross-domain bağımlılık (activity→weather) kök'te **açık ve tipli** geçer, gizli global getter yok; (d) Trigger için `buildContainer(triggerDb)` taze graf kurar. Kritik kural: `buildContainer` + constructor'lar **saf** — build/import anında `config`/`db`'ye dokunmaz (bu yüzden `config` `ModuleDeps`'te yok; service `this.config` okur). Route/handler `getContainer()`; Trigger task `buildContainer(dbManager)`.
 
 ## 7. Arka plan işleri (Trigger.dev)
 `trigger.config.ts` (`dirs: ["./src/**/tasks"]`, `maxDuration: 300`, `.md` loader). Task deseni: `<name>.{schema,task,trigger}.ts`. `initializeForTrigger()` + `createDBManagerForTrigger()` + `buildContainer(dbManager)` + `finalizeTrigger()`. Bu RFC sadece config + helper'ları kurar; task'ler domain RFC'lerinde.
@@ -75,7 +80,7 @@ Kazanç: (a) tek dev dosya yok — her domain wiring'i kendi içinde; (b) privat
 package.json: `hono`, `hono-openapi`, `@hono/swagger-ui`, `@hono/node-server`, `drizzle-orm`, `pg`, `zod` (v4), `@trigger.dev/sdk`, `@clerk/backend`, (`ioredis` opsiyonel cache). devDeps: `biome`, `tsup`, `tsx`, `jest`+`ts-jest`, `drizzle-kit`, `@types/*`. Env `src/env.d.ts` + `.env.sample`, adlandırma `{NAMESPACE}_{SERVICE}_{CREDENTIAL}`.
 
 ## 9. Güvenlik & gizlilik
-Error kodları: `UNAUTHENTICATED` (401) / `FORBIDDEN` (403), asla `UNAUTHORIZED`. `ALREADY_EXISTS` → **422 mi 409 mu bilinçli seç** (brandscale kodda 422). CORS, `compress`, rate-limit middleware yerleri. Gerçek auth 0002'de.
+Error kodları: `UNAUTHENTICATED` (401) / `FORBIDDEN` (403), asla `UNAUTHORIZED`. `ALREADY_EXISTS` → **409** (karar verildi; brandscale 422 kullanıyordu — [[../otonom-kararlar]] §1). Env doğrulaması `initialize()`'da Zod ile fail-fast (prod'da `AUTH_ANONYMOUS_JWT_SECRET` ≥32 char zorunlu). Katman izolasyonu iki kapıda: tip düzeyi (`BaseUseCase`'te `dbClient` yok) + grep (`check-import-direction.sh` DB erişimini yalnız `repositories/`'e kısar). CORS `origin:*` (bearer-token mobil API, cookie yok), `compress`. Gerçek auth + rate-limit 0002+.
 
 ## 10. Test
 Jest + ts-jest, `testMatch: **/*.spec.ts`, `tests/setup.ts` mock config enjekte eder. Co-location: her service'in yanında `<domain>.service.spec.ts`. Bu RFC: foundation base sınıfları + `container` build smoke test.
@@ -91,10 +96,11 @@ Jest + ts-jest, `testMatch: **/*.spec.ts`, `tests/setup.ts` mock config enjekte 
 8. `src/middlewares/error-handler.middleware.ts` + auth middleware yer tutucu.
 9. `scripts/check-import-direction.sh`; lint/type/test yeşil.
 
-## 12. Açık sorular
-- `ALREADY_EXISTS` 422 vs 409 (öneri: 409, semantik olarak daha doğru — brandscale'i takip etmeyebiliriz).
-- Redis cache (ioredis) P0'da gerekli mi, yoksa Postgres cache tablosu yeterli mi (hava cache D-004)? Öneri: başta Postgres, Redis sonra.
-- Deploy hedefi (brandscale Railway) — muhtemelen Railway; ayrı doğrula.
+## 12. Açık sorular → kararlar
+- ~~`ALREADY_EXISTS` 422 vs 409~~ → **409** ([[../otonom-kararlar]] §1). ✅
+- ~~Redis vs Postgres cache~~ → **Postgres** (foundation'da Redis yok; [[../otonom-kararlar]] §2). ✅
+- Deploy hedefi (brandscale Railway) — muhtemelen Railway; kod portable, deploy sonra doğrulanacak ([[../otonom-kararlar]] §5). ⏸️
+- (Review sonrası eklenen kararlar: lazy `getContainer`, config inject etmeme, Zod env doğrulama, `/health` vs `/health/ready` ayrımı, `GenericError` saf kurucu, DB-erişim grep guard'ı — hepsi [[../otonom-kararlar]] §6-11.)
 
 ## 13. Referanslar
 [[reference/brandscale-architecture]] · [[decisions]] · [[splash-backend-decisions]]
