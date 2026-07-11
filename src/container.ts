@@ -1,4 +1,5 @@
 import { type DBManager, getDBManager } from "@/db/db.manager";
+import { createAuthModule } from "@/domains/platform/auth/auth.module";
 
 /**
  * Dependencies every domain module receives. Only `db` lives here — it is the
@@ -23,17 +24,16 @@ export interface ModuleDeps {
  * `initializeApp()`/`initializeForTrigger()` has run.
  */
 export function buildContainer(db: DBManager) {
-  // Threaded to each module so repositories bind to the right pool. Domains
-  // land here from RFC-0002 onwards, e.g.:
-  //   const deps: ModuleDeps = { db };
-  //   const user = createUserModule(deps);
-  //   const weather = createWeatherModule(deps);
+  // Threaded to each module so repositories bind to the right pool. Cross-domain
+  // services are passed explicitly, e.g.:
   //   const activity = createActivityModule({ ...deps, weatherService: weather.weatherService });
-  //   return { ...user, ...weather, ...activity };
-  // biome-ignore lint/correctness/noUnusedVariables: consumed as modules are composed (RFC-0002+)
   const deps: ModuleDeps = { db };
 
-  return {};
+  const auth = createAuthModule(deps);
+
+  return {
+    ...auth,
+  };
 }
 
 export type Container = ReturnType<typeof buildContainer>;

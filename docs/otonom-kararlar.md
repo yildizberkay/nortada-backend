@@ -199,4 +199,97 @@ edebilirdi. Bu grep o kaçağı da kapatır (principal-architect review MEDIUM).
 
 ---
 
+---
+
+# RFC-0002 (Kimlik & Auth) kararları
+
+## 13. Anonim JWT: uzun ömür + iss/aud + retired-row revocation ✅
+
+**Karar:** Anonim token HS256, `sub=user.uid`, `tokenType:"anonymous"`,
+`iss:"splash-anon"`, `aud:"splash-api"`, TTL **365 gün**. Doğrulamada alg HS256'ya
+sabitli, iss+aud assert ediliyor.
+
+**Neden:** Token cihaz Keychain'inde uzun yaşamalı (anonim kullanıcı yeniden
+giriş yapmaz). Düşük yetkili (yalnız kendi verisi). iss/aud, `AUTH_ANONYMOUS_JWT_SECRET`'in
+başka bir amaç için üretilmiş bir token'ının auth token'ı sanılmasını engeller
+(defense-in-depth, principal-review LOW). Geniş revocation tek kaldıraç: secret
+rotasyonu (tüm anonim token'ları iptal eder). Bireysel revocation: merge sonrası
+`mergedIntoUserId` kontrolü her doğrulamada.
+
+**Onayın gerekebilir:** 365 gün uzun; App Attest gelince kısaltıp yenileme
+eklenebilir.
+
+## 14. Clerk doğrulama: networkless `jwtKey` + `authorizedParties` (azp) ✅ (review-driven)
+
+**Karar:** `verifyToken` artık `jwtKey` (varsa networkless) + `authorizedParties`
+(azp) opsiyonlarını kullanıyor. Env: `CLERK_JWT_KEY`, `CLERK_AUTHORIZED_PARTIES`
+(virgüllü). Ayrıca hata sınıflandırması: Clerk'in `TokenVerificationError`
+reason'ı JWKS/altyapı ise **EXTERNAL_SERVICE_ERROR** (raporlanır, 5xx), token
+sorunuysa **UNAUTHENTICATED** (401, sessiz).
+
+**Neden (principal-review HIGH/MEDIUM):** (a) azp kontrolü token'ın bizim
+frontend için üretildiğini doğrular; (b) `jwtKey` her isteği canlı JWKS
+fetch'ine bağlamaktan kurtarır (Clerk outage'ında tüm auth çökmesin); (c) bir
+Clerk outage'ının 401 "geçersiz token" gibi görünüp ops'u kör etmesi engellenir.
+
+**Onayın gerekli:** Prod'da `CLERK_JWT_KEY`'i Clerk dashboard'dan al (API keys →
+JWT public key) ve `CLERK_AUTHORIZED_PARTIES`'i app origin/bundle ile doldur.
+Şimdilik native-only olduğu için boşken de çalışır (secretKey'e düşer).
+
+## 15. Provisioning + link yarış koşulları: idempotent + fallthrough ✅ (review-driven)
+
+**Karar:** (a) `createAnonymous`/`createClerkUser` artık `ON CONFLICT DO NOTHING`
++ re-read (cold-launch'ta paralel istekler 500 yerine tek satıra düşer). (b)
+`/link` branch-1 upgrade unique çakışmasına düşerse (`tryUpgradeAnonymousToClerk`
+→ null) branch-2'ye (reassign+retire) **fallthrough** eder — 500 yok.
+
+**Neden:** iOS cold-launch'ta aynı token'la paralel istekler tipik; check-then-insert
+yarışı partial-unique index'e çarpıp 500 üretiyordu (principal-review HIGH+MEDIUM).
+pg 23505 bilgisi repository katmanında kapalı tutuldu (servis sızmıyor).
+
+## 16. Retire edilen anonim satır → cihaz yeniden bootstrap edebilir ✅ (review-driven)
+
+**Karar:** Branch-2 merge'de `markMergedInto` artık `anonymousDeviceId`'i de
+**null** yapıyor; `findByAnonymousDeviceId` yalnız `mergedIntoUserId IS NULL`
+(canlı) satır döner.
+
+**Neden (principal-review HIGH):** Aksi halde kullanıcı Clerk'ten çıkıp app
+anonime düşerse, retired satırın uid'iyle token üretilir ve her istek
+`ANONYMOUS_TOKEN_RETIRED` ile ölür — cihaz kurtulamaz. Bu fix cihazın taze canlı
+satır açmasına izin verir.
+
+## 17. `/anonymous` + `/link` rate-limit ✅ (review-driven)
+
+**Karar:** IP-scoped fixed-window in-memory limiter (`rateLimit`, 60sn / 20 istek)
+bootstrap endpoint'lerine eklendi. Aşımda `RATE_LIMIT_EXCEEDED` (429).
+
+**Neden:** RFC-0002 §9 rate-limit'i P0 abuse kontrolü olarak söz vermişti ama yoktu;
+kimliksiz `/anonymous` sınırsız INSERT + token mint idi (principal-review HIGH).
+
+**Onayın gerekebilir:** **In-memory → tek instance içindir.** Railway'de birden
+çok instance'a çıkınca Postgres/Redis tabanlı limiter'a geçmeli (bucket paylaşımı).
+Şimdilik tek instance varsayımı.
+
+## 18. Merge cross-domain transaction planı (RFC-0006'da) ⏸️ (review-driven)
+
+**Karar:** Bugün user tablosu dışında sahiplenilen kayıt yok, bu yüzden branch-2
+tek `UPDATE` (kendi başına atomik). İlk kullanıcı-sahipli domain (RFC-0006
+activity) gelince merge, **tek transaction** açan bir orkestrasyona dönecek:
+her domain repo'su `reassignOwner(fromUserId, toUserId, tx)` sunacak ve
+`markMergedInto(tx)` ile aynı tx içinde atomik koşacak.
+
+**Neden:** Reviewer "boundary'yi şimdi kur" dedi; ama ikinci katılımcı yokken
+tek statement'ı transaction'a sarmak no-op abstraction olurdu. Bunun yerine planı
+netleştirdim ve kodda seam'i (repo docstring) işaretledim. RFC-0002 §9'daki
+"transaction'lı merge" ifadesi buna göre güncellendi.
+
+## 19. Clerk email/displayName hydration → RFC-0003 ⏸️
+
+**Not:** Clerk session token'ı default'ta `email` taşımaz; şu an provision'da
+`email/displayName` çoğunlukla null kalıyor. RFC-0003 (profil) bunları Clerk
+User API'sinden (`clerkClient.users.getUser`) veya custom JWT template claim'iyle
+dolduracak. Havada bırakmıyorum — RFC-0003'ün işi.
+
+---
+
 *(Sonraki RFC'lerde verilen kararlar bu dosyaya eklenmeye devam edecek.)*

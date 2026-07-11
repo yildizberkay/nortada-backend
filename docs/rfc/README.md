@@ -11,7 +11,7 @@ Bağımlılık sırasına göre. Her step bir öncekinin üstüne kurulur.
 | Step | RFC | Başlık | Domain | Status |
 |---|---|---|---|---|
 | **0** | [0001](0001-foundation.md) | Proje temeli & mimari (scaffold, katmanlar, DI, error, config, OpenAPI, DB, test, tooling) | platform/foundation | ✅ Completed |
-| **1** | [0002](0002-identity-auth.md) | Kimlik & Auth (anonim JWT + Clerk Apple/e-posta, dual-auth middleware, anonim→hesap merge) | platform/auth | 🟡 Draft |
+| **1** | [0002](0002-identity-auth.md) | Kimlik & Auth (anonim JWT + Clerk Apple/e-posta, dual-auth middleware, anonim→hesap merge) | platform/auth | ✅ Completed |
 | **2** | [0003](0003-user-profile.md) | User & Profil (user tablosu, user_sport_profile, birimler, favoriler) | platform/user | 🟡 Draft |
 | **3** | [0004](0004-spot.md) | Spot (şema + geo nearby/search + OSM sourcing + Suggest Spot) | feature/spot | 🟡 Draft |
 | **4** | [0005](0005-weather.md) | Hava (Open-Meteo forecast/marine, decision+best-window, talep-güdümlü cache + Trigger tazeleme) | feature/weather | 🟡 Draft |

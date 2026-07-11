@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | 0002 |
 | **Başlık** | Kimlik & Auth (anonim JWT + Clerk, merge) |
-| **Status** | 🟡 Draft |
+| **Status** | ✅ Completed |
 | **Step** | 1 |
 | **Depends on** | RFC-0001 |
 | **Domain(ler)** | platform/auth |
@@ -43,10 +43,10 @@ Kullanıcı "anonim adamın da JWT'si olsun, unified olsun" dedi; ama anonimi Cl
 Yok (senkron). İleride: anonim satır GC (uzun süre link olmayan + inaktif) — sonra.
 
 ## 8. Bağımlılıklar & entegrasyonlar
-`@clerk/backend` (JWKS doğrulama), kendi JWT için `jose`/`hono/jwt`. Env: `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, `AUTH_JWT_SECRET`, `AUTH_ANON_TOKEN_TTL`. iOS: Clerk iOS SDK `signInWithApple()`.
+`@clerk/backend` (`verifyToken`; networkless `jwtKey` + `authorizedParties`), kendi JWT için `jose` (HS256). Env: `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_KEY`, `CLERK_AUTHORIZED_PARTIES` (virgüllü), `AUTH_ANONYMOUS_JWT_SECRET`. Anon TTL kod sabiti (365g). iOS: Clerk iOS SDK `signInWithApple()`.
 
 ## 9. Güvenlik & gizlilik
-Anonim JWT uzun ömürlü ama düşük yetkili (yazma user-scoped, kendi verisi). Clerk token kısa ömürlü + refresh (SDK). Merge transaction'lı, idempotent. Attestation (App Attest) opsiyonel — anonim endpoint abuse'a karşı rate-limit. Merge sonrası eski anonim token reddedilir (`mergedIntoUserId` kontrolü).
+Anonim JWT uzun ömürlü (365g) ama düşük yetkili (yazma user-scoped, kendi verisi); HS256 sabit + iss/aud assert. Clerk token kısa ömürlü + refresh (SDK); doğrulama networkless `jwtKey` + azp; JWKS/altyapı hatası 5xx (raporlanır), token hatası 401. Provisioning + link **idempotent** (ON CONFLICT + fallthrough — yarışta 500 yok). Merge idempotent; bugün tek `UPDATE` (atomik), ilk kullanıcı-sahipli domain'de (RFC-0006) tek transaction'a dönecek ([[../otonom-kararlar]] §18). Bootstrap endpoint'lerinde IP rate-limit (429). Merge sonrası eski anonim token reddedilir (`mergedIntoUserId`), cihaz `anonymousDeviceId` serbest bırakılıp yeniden bootstrap edebilir. Attestation (App Attest) opsiyonel/sonra.
 
 ## 10. Test
 `auth.service.spec.ts`: issueAnonymous (yeni/mevcut cihaz), verify (anon/clerk/invalid), **linkAnonymousToClerk her iki dal** (Clerk user yok → upgrade; var → reassign), merge idempotency, reassign çağrıları mock.
@@ -59,9 +59,11 @@ Anonim JWT uzun ömürlü ama düşük yetkili (yazma user-scoped, kendi verisi)
 5. `auth.module.ts`, `container` + `registerRoutes` (`/v1/auth`).
 6. lint/type/test.
 
-## 12. Açık sorular
-- App Attest / attestation P0'da mı, sonra mı? (öneri: sonra; başta rate-limit yeter.)
-- Clerk e-posta stratejisi (magic link / OTP) — Clerk dashboard config; kod tarafını etkilemez.
+## 12. Açık sorular → kararlar
+- App Attest / attestation: **sonra** — P0'da IP rate-limit (60sn/20) eklendi ([[../otonom-kararlar]] §17). ✅
+- Clerk e-posta/isim: session token'ı çoğu zaman taşımaz → provision'da null; **RFC-0003** Clerk User API'sinden hydrate edecek ([[../otonom-kararlar]] §19). ✅
+- Clerk e-posta stratejisi (magic link / OTP) — Clerk dashboard config; kod tarafını etkilemez. ⏸️
+- Rate-limit in-memory (tek instance); çok-instance'ta Postgres/Redis'e geç ([[../otonom-kararlar]] §17). ⏸️
 
 ## 13. Referanslar
 [[decisions]] D-002 · [[reference/brandscale-architecture]] §11 (authenticate-app-jwt)

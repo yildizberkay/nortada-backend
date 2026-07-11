@@ -11,13 +11,17 @@ const config: Config = {
   },
   setupFiles: ["<rootDir>/tests/setup.ts"],
   transform: {
-    "^.+\\.tsx?$": [
+    // Include .js so ts-jest can down-level ESM-only deps (jose) to CJS.
+    "^.+\\.[tj]sx?$": [
       "ts-jest",
       {
         tsconfig: "tsconfig.test.json",
       },
     ],
   },
+  // jose ships ESM-only; let it through the transform above instead of being
+  // skipped as a node_modules dep.
+  transformIgnorePatterns: ["/node_modules/(?!jose/)"],
   collectCoverageFrom: [
     "src/domains/**/services/*.service.ts",
     "src/packages/**/*.ts",

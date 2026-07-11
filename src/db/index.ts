@@ -3,4 +3,4 @@
 
 export type { DBClient, DBManager } from "./db.manager";
 export { DrizzleDBManager } from "./db.manager";
-export type { JsonArray, JsonObject, JsonValue } from "./schema";
+export type { JsonArray, JsonObject, JsonValue, NewUser, User } from "./schema";

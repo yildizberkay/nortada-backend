@@ -20,6 +20,12 @@ export interface Config {
   clerk: {
     secretKey?: string;
     publishableKey?: string;
+    // PEM public key → networkless token verification (no per-request JWKS
+    // fetch). Strongly preferred in prod.
+    jwtKey?: string;
+    // Expected token-issuing frontends (azp check). Verifies a token was minted
+    // for our app, not another party in the Clerk instance.
+    authorizedParties?: string[];
   };
 
   // Our own anonymous-device auth (RFC-0002). `anonymousJwtSecret` signs the
@@ -51,6 +57,9 @@ const envSchema = z
     AUTH_ANONYMOUS_JWT_SECRET: z.string().min(1),
     CLERK_SECRET_KEY: z.string().optional(),
     CLERK_PUBLISHABLE_KEY: z.string().optional(),
+    CLERK_JWT_KEY: z.string().optional(),
+    // Comma-separated list of authorized parties (azp) for Clerk tokens.
+    CLERK_AUTHORIZED_PARTIES: z.string().optional(),
     TRIGGER_SECRET_KEY: z.string().optional(),
     TRIGGER_PROJECT_ID: z.string().optional(),
   })
@@ -98,6 +107,10 @@ export class GlobalConfig {
       clerk: {
         secretKey: env.CLERK_SECRET_KEY,
         publishableKey: env.CLERK_PUBLISHABLE_KEY,
+        jwtKey: env.CLERK_JWT_KEY,
+        authorizedParties: env.CLERK_AUTHORIZED_PARTIES?.split(",")
+          .map((p) => p.trim())
+          .filter(Boolean),
       },
       auth: {
         anonymousJwtSecret: env.AUTH_ANONYMOUS_JWT_SECRET,
