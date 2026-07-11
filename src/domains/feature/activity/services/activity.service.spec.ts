@@ -59,10 +59,8 @@ const mockRepo = {
   listByUser: jest.fn(),
   updateContext: jest.fn(),
   deleteByUid: jest.fn(),
-  insertTrack: jest.fn(),
-  findTrackByActivityId: jest.fn(),
-  insertConditions: jest.fn(),
-  insertEquipmentLink: jest.fn(),
+  trackExists: jest.fn(),
+  ingestTrack: jest.fn(),
   findSummaryByActivityId: jest.fn(),
   findRouteByActivityId: jest.fn(),
   findEffortsByActivityId: jest.fn(),
@@ -73,34 +71,85 @@ const mockEquipmentRepo = {
   findByUidForUser: jest.fn(),
 } as unknown as jest.Mocked<EquipmentRepository>;
 
+const mockObjectStorage = {
+  put: jest.fn(),
+  get: jest.fn(),
+  delete: jest.fn(),
+};
+
 describe("ActivityService", () => {
   let service: ActivityService;
 
   beforeEach(() => {
-    service = new ActivityService(mockRepo, mockEquipmentRepo);
+    service = new ActivityService(
+      mockRepo,
+      mockEquipmentRepo,
+      mockObjectStorage,
+    );
   });
 
   describe("create", () => {
     it("ingests a fresh upload and enqueues metric computation", async () => {
       mockRepo.createActivity.mockResolvedValue(activityRow());
-      mockRepo.findTrackByActivityId.mockResolvedValue(undefined as never);
+      mockRepo.trackExists.mockResolvedValue(false);
 
       const result = await service.create(user, uploadInput);
 
-      expect(mockRepo.insertTrack).toHaveBeenCalledWith(
-        expect.objectContaining({ activityId: 10, sampleCount: 2 }),
+      // Raw track goes to object storage; the DB row keeps only the key + count.
+      expect(mockObjectStorage.put).toHaveBeenCalledWith(
+        "activities/act-1/track.json.gz",
+        expect.any(Buffer),
+        expect.objectContaining({ contentEncoding: "gzip" }),
+      );
+      expect(mockRepo.ingestTrack).toHaveBeenCalledWith(
+        expect.objectContaining({
+          track: expect.objectContaining({
+            activityId: 10,
+            sampleCount: 2,
+            storageKey: "activities/act-1/track.json.gz",
+          }),
+        }),
       );
       expect(mockTrigger).toHaveBeenCalledWith("act-1");
       expect(result).toEqual({ uid: "act-1", status: "processing" });
     });
 
-    it("is idempotent — a retried upload does not re-ingest or re-enqueue", async () => {
-      mockRepo.createActivity.mockResolvedValue(activityRow());
-      mockRepo.findTrackByActivityId.mockResolvedValue({ id: 1 } as never);
+    it("does not re-ingest or re-enqueue a retry once metrics are ready", async () => {
+      mockRepo.createActivity.mockResolvedValue(
+        activityRow({ status: "ready" }),
+      );
+      mockRepo.trackExists.mockResolvedValue(true);
 
       await service.create(user, uploadInput);
 
-      expect(mockRepo.insertTrack).not.toHaveBeenCalled();
+      expect(mockObjectStorage.put).not.toHaveBeenCalled();
+      expect(mockRepo.ingestTrack).not.toHaveBeenCalled();
+      expect(mockTrigger).not.toHaveBeenCalled();
+    });
+
+    it("re-enqueues a still-processing retry without re-ingesting the track", async () => {
+      // Durability: a prior upload committed the track but its enqueue failed —
+      // the retry must recover it, not strand it in `processing` forever.
+      mockRepo.createActivity.mockResolvedValue(activityRow());
+      mockRepo.trackExists.mockResolvedValue(true);
+
+      await service.create(user, uploadInput);
+
+      expect(mockObjectStorage.put).not.toHaveBeenCalled();
+      expect(mockRepo.ingestTrack).not.toHaveBeenCalled();
+      expect(mockTrigger).toHaveBeenCalledWith("act-1");
+    });
+
+    it("rejects an upload whose uid belongs to another user", async () => {
+      mockRepo.createActivity.mockResolvedValue(activityRow({ userId: 999 }));
+
+      await expect(service.create(user, uploadInput)).rejects.toMatchObject({
+        errorCode: "ALREADY_EXISTS",
+        options: { reason: ActivityReason.ALREADY_EXISTS },
+      });
+      expect(mockRepo.trackExists).not.toHaveBeenCalled();
+      expect(mockObjectStorage.put).not.toHaveBeenCalled();
+      expect(mockRepo.ingestTrack).not.toHaveBeenCalled();
       expect(mockTrigger).not.toHaveBeenCalled();
     });
   });

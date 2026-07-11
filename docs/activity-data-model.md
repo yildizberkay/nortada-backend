@@ -28,7 +28,7 @@ Her L1 satırı **analiz metadata'sı** taşır: `analysis_type`, `algorithm_ver
 - provenans: `device`, `deviceModel`, `osVersion`, `appVersion`, `sensorSources` (JSONB), `importedFileType?`, `externalActivityId?`, `rawFileRef?`, `wasImported`, `importedAt?`
 - oluşturma/güncelleme: `createdAt`, `updatedAt`
 
-**`activity_track`** — ham yüksek çözünürlüklü rota (blob; Postgres `bytea`/jsonb ya da object storage). Örnek başına: `t`, `lat`, `lon`, `altitude`, `groundSpeed`, `course`, `hAccuracy`, `vAccuracy`, `source`, `isPaused`. **Değişmez.** ([[gps-tracking]])
+**`activity_track`** — ham yüksek çözünürlüklü rota. **Samples object storage'da** (S3/R2, gzipli JSON); tablo satırı yalnız `storage_key` + `sample_count` tutar (karar: [[otonom-kararlar]] §30). Örnek başına: `t`, `lat`, `lon`, `altitude`, `groundSpeed`, `course`, `hAccuracy`, `vAccuracy`, `source`, `isPaused`. **Değişmez.** ([[gps-tracking]])
 
 **`activity_health`** — HR/enerji ham örnekleri (blob), HealthKit varsa. *(Apple Watch fazı — schema hazır, veri sonra.)*
 

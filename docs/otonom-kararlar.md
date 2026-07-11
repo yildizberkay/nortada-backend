@@ -471,6 +471,135 @@ tek temiz `0000`'a **konsolide ettim** (rename/drop cruft yerine final şema). P
 şema evrimi git history'de (schema.ts diff'leri) korunuyor. Gerçek deploy öncesi zaten
 squash edilirdi.
 
+# RFC-0006 (Aktivite/Seans) kararları
+
+## 29. RFC-0006 dual-review düzeltmeleri ✅ (review-driven, 2026-07-11)
+
+İki reviewer (convention + principal-architect) commit sonrası RFC-0006'yı denetledi.
+Metrik motoru ürünün **kanonik** hız/mesafe kaynağı (D-001) olduğu için correctness'e
+sert bakıldı. Bulunan + düzeltilenler:
+
+**🔴 CRITICAL — gzip zip-bomb DoS (düzeltildi).** Upload `gunzipSync(raw)`'ı
+**sınırsız + senkron** çağırıyordu → küçük bir gzip payload ~GB'a şişip process'i
+OOM edebilir, üstelik senkron olduğu için event-loop'u kilitler. Tek istekle
+(anonim token yeterli) prod'u düşürebilirdi. Düzeltme (`routes/v1.ts`):
+1. `bodyLimit({ maxSize: 24MB })` middleware — gövde tamamı buffer'lanmadan reddedilir.
+2. `gunzip` **async** + `maxOutputLength: 64MB` — şişen çıktı sınırı aşınca `RangeError`.
+3. Tüm decompress+parse `try/catch` içinde → bozuk gzip artık 400 `INVALID_UPLOAD`
+   (eskiden yakalanmayan 500 + ops'a captureException).
+
+**🟠 HIGH — `avgMovingSpeed` yanlış hesaplanıyordu (düzeltildi).** `totalDistance /
+movingTime` idi: pay hareketsizken (rig, gust bekleme, water-start) biriken mesafeyi
+de içeriyor, payda içermiyor → boş anları olan her seansta **şişik** değer. Düzeltme
+(`metrics.ts`): `movingDistance` ayrı biriktiriliyor (aynı `speed > MOVING_THRESHOLD`
+kapısı altında) → `avgMovingSpeed = movingDistance / movingTime`. Regresyon testi
+eklendi (idle segmentli track bugünkü kodu yakalar).
+
+**🟠 HIGH — idempotent upload sahiplik-kontrolsüzdü (IDOR, düzeltildi).** Client-üretimi
+`uid` çakışınca `createActivity` başkasının satırını (userId scope'suz) geri okuyup
+üzerine yazabiliyordu → kurbanın hesabına saldırganın track'i yazılır / saldırganın
+konumu kurbana sızar. Düzeltme (`activity.service.ts`): re-read sonrası
+`activity.userId !== user.id` ise `ALREADY_EXISTS` (409) — çocuk insert/enqueue'dan
+**önce**. UUIDv4 tahmin-edilemezliği tek savunma değil (uid URL/log'da görünür,
+RFC-0006 §9 public sharing yol haritasında).
+
+**🟠 HIGH — `processing` sonsuza kadar takılabiliyordu (düzeltildi).** Adımlar ayrı
+autocommit'ti + enqueue sona bağlıydı; enqueue başarısız olursa (dev'de Trigger yok,
+ya da geçici outage) retry `track var` guard'ında kısa devre yapıp **hiç enqueue
+etmiyordu** → kalıcı `processing`. Düzeltme:
+- L0 yazımı (track + conditions + equipment) **tek transaction**'da (`repo.ingestTrack`,
+  `dbClient.transaction`) → kısmi başarısızlıkta bölünmez.
+- Enqueue artık **track varlığına değil `status === "processing"`'e** bağlı → başarısız
+  enqueue'lu retry kendini kurtarır. `computeAndStore` idempotent, çift-enqueue zararsız.
+  `failed` statüsü kasıtlı **es geçilir** (aynı immutable track'i yeniden yüklemek
+  sonucu değiştirmez; recompute ayrı seam'den — ALGORITHM_VERSION).
+
+**🟡 MEDIUM — `maxSpeed` tek-örnek spike + `speedAccuracy` atılıyordu (düzeltildi).**
+`maxSpeed` doğrudan Doppler'den geliyordu; 40 m/s altındaki tek hatalı okuma başlık
+metriği olabiliyordu. `research/gps-tracking.md` `speedAccuracy`'yi "spike filtreleme
+için" diye anıyordu ama ne şemada ne motorda vardı. Düzeltme (`metrics.ts` + şema):
+`sAccuracy` (CoreLocation speedAccuracy) ingest ediliyor; Doppler ancak (a) accuracy
+iyi (≤2 m/s) ve (b) pozisyon-türevi hız onu ≥%50 doğruluyorsa `maxSpeed`'i set edebilir,
+yoksa spike-elenmiş türev kullanılır. Regresyon testi eklendi.
+
+**🟡 Convention — repository SELECT * (düzeltildi).** Kodun `xColumns` allowlist deseni
+(SpotRepository "never SELECT *") activity/equipment repolarında yoktu. Her okuyucuya
+`columns:` allowlist eklendi (`activityColumns`, `activityTrackColumns`, … +
+`equipmentProfileColumns`); bare `.select()`'ler relational `findMany({ columns })`'e
+çevrildi. Ayrıca `trackExists` (yalnız `id`) eklendi — idempotency probe'u artık her
+upload'ta 16MB `samples` blob'unu çekmiyor.
+
+**🟡 Convention — ölü error reason (düzeltildi).** `EQUIPMENT_NOT_FOUND` hiç fırlatılmıyordu.
+Ekipman-attach kasıtlı best-effort (çözülemeyen ref upload'u bozmamalı) → reason
+kaldırıldı; bunun yerine `resolveEquipmentLinks` çözülemeyen ref'i `log.warn` ile
+**gözlemlenebilir** kılıyor.
+
+**Doc düzeltmeleri:** `schema.ts` yorumları (`groundSpeed`→`speed`+`sAccuracy`;
+`dataVersion` gerçeğe uygun); `speedAccuracy` artık ingest edildiği için research doc
+tutuyor.
+
+### Bilinçli ERTELENENLER (P0'da kabul, senin görüşünü isteyebilir)
+
+- **`best5x10` greedy hız-sıralı seçim optimal değil** — hızlı bir pencere, toplamı daha
+  büyük iki komşu pencereyi bloke edebilir. GPS-Speedsurfing topluluk konvansiyonu +
+  D-001 "resmi rekor değil" duruşu → P0'da kabul. Exact istenirse DP gerekir.
+- **Effort'lar pozisyon-türevi (Doppler-entegre değil)** — 1Hz telefon GPS'inde makul;
+  doppler-logger sayılarından sapma bilinen, non-official duruşla uyumlu.
+- **Privacy alanları (`privacy`/`hideStart`/`hiddenRadiusM`) saklanıyor ama zorlanmıyor** —
+  `detail` polyline'ı tam döndürüyor. Şimdilik zararsız (owner-scoped, public share yok);
+  RFC-0006 §9 sharing gelince **zorlanmalı** (o RFC'nin işi).
+- **`activity_equipment → equipment_profile` FK'da `onDelete` yok** — P0'da ekipman-silme
+  endpoint'i yok. Silme gelince `RESTRICT` vs snapshot-koruma kararı verilecek.
+- **Reconciliation cron yok** — status-keyed enqueue retry'da kurtarıyor, ama "N dk'dır
+  `processing` + track var → yeniden enqueue" cron'u belt-and-suspenders olurdu; aynı
+  zamanda RFC-0006 §7 recompute giriş noktası olur. RFC-0007/ops'a ertelendi.
+- **Full-res polyline (LOD yok)** — 2 saatlik seans ~7200 nokta. `activity_route.simplified`
+  LOD'ları P1 (activity-data-model.md); detail yanıt boyutu notu.
+- **Aynı uid + farklı samples sessizce yok sayılır** — gerçek retry için doğru (L0
+  write-once), ama divergent re-upload ayırt edilemiyor. P0'da kabul; istenirse
+  content-hash ile conflict sinyali eklenir.
+
+## 30. Ham GPS track → S3 object storage ✅ (Berkay kararı 2026-07-11)
+
+Berkay: "dosya depolama için s3 kullanırız." RFC-0006'nın açık sorusunu (§57: "Ham
+track Postgres blob mu object storage mu?") çözer. Berkay "Do it now, in RFC-0006"
+seçti → jsonb yerine S3 uygulandı.
+
+**Ne değişti:**
+- **`ObjectStorage` port** (`src/packages/object-storage`) — `put/get/delete`;
+  `S3ObjectStorage` adaptörü (`@aws-sdk/client-s3`, S3/R2/MinIO uyumlu:
+  endpoint + forcePathStyle). Config lazy okunur (import-safe, `OpenMeteoClient`
+  gibi) → `new S3ObjectStorage()` config'siz, S3 client ilk kullanımda kurulur.
+- **`activity_track` şeması:** `samples jsonb` **kaldırıldı** → `storage_key text
+  NOT NULL`. Satır artık yalnız pointer + `sample_count`. Migration temiz tek base'e
+  yeniden generate edildi (`0000_clean_azazel`; DB hiç apply edilmedi, §0/§28 gibi).
+- **Upload akışı** (`ActivityService`): samples → `gzip(JSON)` → `objectStorage.put`
+  (`activities/{uid}/track.json.gz`), **DB transaction'ından ÖNCE** (external I/O tx
+  içinde durmaz). Sonra `ingestTrack` `storage_key`'i yazar. Key deterministik →
+  retry aynı objeyi overwrite eder (idempotent); nadir orphan (S3 yazıldı, DB
+  yazılmadı) sonraki retry'da geri alınır.
+- **Metrik akışı** (`ActivityMetricsService`): `findTrackByActivityId` → `storage_key`
+  → `objectStorage.get` → `gunzip` → `JSON.parse` → `computeMetrics`. Trigger task
+  `buildContainer` üzerinden aynı port'u alır (modülde kurulu).
+- **Config:** `OBJECT_STORAGE_{BUCKET,REGION,ENDPOINT,ACCESS_KEY_ID,SECRET_ACCESS_KEY,
+  FORCE_PATH_STYLE}` env. Bucket dev'de opsiyonel (S3'süz boot; adaptör kullanılırsa
+  net `EXTERNAL_SERVICE_ERROR` fırlatır), **prod'da zorunlu** (env refine — hem HTTP
+  upload hem Trigger read kullandığı için worker-rolünden bağımsız).
+- `.env.sample` + RFC-0006 §8/§12 + activity-data-model.md güncellendi.
+
+**⚠️ Test edilemeyen kısım (senin bilgin için):** Bu ortamda S3 bucket/credential
+yok (Docker registry engelli olduğu gibi). `S3ObjectStorage` adaptörünün kendisi
+**canlı entegrasyon-test edilmedi** — ince, iyi-anlaşılmış bir SDK wrapper. Servis
+testleri port'u **mock'layarak** gerçek kapsama sağlıyor (upload put'u çağırıyor mu,
+metrik get→gunzip→parse doğru mu). Gerçek bucket + credential bağlanınca bir kez
+manuel duman-testi (upload → S3'te obje → metrik hesap) yapılmalı. Bunu senin için
+not düşüyorum.
+
+**Neden port + adaptör:** İkinci sağlayıcı (R2↔S3 geçişi) ya da presigned-URL
+doğrudan-upload (iki-fazlı) ileride gelirse tek adaptör/tek metod değişir; servisler
+`ObjectStorage`'a bağlı, concrete client'a değil (DIP — `WeatherProvider` deseniyle
+tutarlı).
+
 ---
 
 *(Sonraki RFC'lerde verilen kararlar bu dosyaya eklenmeye devam edecek.)*

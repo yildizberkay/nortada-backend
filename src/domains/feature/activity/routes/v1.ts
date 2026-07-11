@@ -1,6 +1,8 @@
-import { gunzipSync } from "node:zlib";
+import { promisify } from "node:util";
+import { gunzip } from "node:zlib";
 
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { describeRoute, resolver, validator as zValidator } from "hono-openapi";
 
 import { getContainer } from "@/container";
@@ -32,9 +34,25 @@ const jsonResponse = (schema: Parameters<typeof resolver>[0]) => ({
   },
 });
 
+const gunzipAsync = promisify(gunzip);
+
+// Hard caps on the upload body. `bodyLimit` aborts the request before the whole
+// body is buffered; `MAX_DECOMPRESSED_BYTES` (passed to gunzip's maxOutputLength)
+// bounds the inflated size so a small gzip payload can't decompression-bomb the
+// process. A 200k-sample track is ~16 MB of JSON / ~2–3 MB gzipped.
+const MAX_REQUEST_BYTES = 24 * 1024 * 1024; // 24 MiB on the wire
+const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024; // 64 MiB inflated
+
+const invalidUpload = (message: string) =>
+  new GenericError("FORM_ERROR", {
+    reason: ActivityReason.INVALID_UPLOAD,
+    message,
+  });
+
 // The GPS payload is large, so uploads arrive gzipped. zValidator("json") reads
 // the raw (compressed) body, so the upload endpoint decompresses + validates
-// itself. Everything else uses zValidator normally.
+// itself. Decompression is async (never blocks the event loop) and capped
+// (never OOMs). Everything else uses zValidator normally.
 const readGzipBody = async <T>(
   c: {
     req: {
@@ -45,23 +63,31 @@ const readGzipBody = async <T>(
   schema: { safeParse(v: unknown): { success: boolean; data?: T } },
 ): Promise<T> => {
   const raw = Buffer.from(await c.req.arrayBuffer());
-  const body =
-    c.req.header("Content-Encoding") === "gzip" ? gunzipSync(raw) : raw;
+
+  let body: Buffer;
+  try {
+    body =
+      c.req.header("Content-Encoding") === "gzip"
+        ? await gunzipAsync(raw, { maxOutputLength: MAX_DECOMPRESSED_BYTES })
+        : raw;
+  } catch {
+    // Malformed gzip, or a decompression bomb exceeding maxOutputLength — a bad
+    // client request, not a server error (would otherwise surface as a 500).
+    throw invalidUpload("Upload body could not be decompressed");
+  }
+  if (body.byteLength > MAX_DECOMPRESSED_BYTES) {
+    throw invalidUpload("Upload body too large");
+  }
+
   let json: unknown;
   try {
     json = JSON.parse(body.toString("utf-8"));
   } catch {
-    throw new GenericError("FORM_ERROR", {
-      reason: ActivityReason.INVALID_UPLOAD,
-      message: "Body is not valid JSON",
-    });
+    throw invalidUpload("Body is not valid JSON");
   }
   const parsed = schema.safeParse(json);
   if (!parsed.success || parsed.data === undefined) {
-    throw new GenericError("FORM_ERROR", {
-      reason: ActivityReason.INVALID_UPLOAD,
-      message: "Upload payload failed validation",
-    });
+    throw invalidUpload("Upload payload failed validation");
   }
   return parsed.data;
 };
@@ -80,6 +106,19 @@ activityRoute.post(
     ),
   }),
   rateLimit({ windowMs: 60_000, max: 30, keyPrefix: "activity-upload" }),
+  bodyLimit({
+    maxSize: MAX_REQUEST_BYTES,
+    onError: (c) =>
+      c.json(
+        HTTPResponse.error({
+          error: "FORM_ERROR",
+          reason: ActivityReason.INVALID_UPLOAD,
+          message: "Upload body too large",
+          statusCode: 413,
+        }),
+        413,
+      ),
+  }),
   async (c) => {
     const input = await readGzipBody(c, createActivitySchema);
     const result = await getContainer().activityService.create(

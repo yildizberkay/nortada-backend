@@ -1,13 +1,18 @@
+import { promisify } from "node:util";
+import { gunzip } from "node:zlib";
+
 import type { NewActivityEffort } from "@/db";
 import { BaseUseCase } from "@/domains/platform/foundation";
 import { GenericError } from "@/packages/error";
 import { createLogger } from "@/packages/logger";
+import type { ObjectStorage } from "@/packages/object-storage";
 
 import { ActivityReason } from "../errors";
 import { ALGORITHM_VERSION, computeMetrics, type Sample } from "../metrics";
 import type { ActivityRepository } from "../repositories/activity.repository";
 
 const log = createLogger("ActivityMetricsService");
+const gunzipAsync = promisify(gunzip);
 
 /**
  * Canonical metric computation (D-001), invoked by the activity-compute-metrics
@@ -16,7 +21,10 @@ const log = createLogger("ActivityMetricsService");
  * and re-runnable when ALGORITHM_VERSION bumps.
  */
 export class ActivityMetricsService extends BaseUseCase {
-  constructor(private readonly activityRepository: ActivityRepository) {
+  constructor(
+    private readonly activityRepository: ActivityRepository,
+    private readonly objectStorage: ObjectStorage,
+  ) {
     super();
   }
 
@@ -33,7 +41,7 @@ export class ActivityMetricsService extends BaseUseCase {
       const track = await this.activityRepository.findTrackByActivityId(
         activity.id,
       );
-      const samples = (track?.samples ?? []) as unknown as Sample[];
+      const samples = track ? await this.loadSamples(track.storageKey) : [];
       const { summary, efforts, polyline } = computeMetrics(samples);
       const computedAt = new Date();
 
@@ -73,5 +81,13 @@ export class ActivityMetricsService extends BaseUseCase {
       await this.activityRepository.setStatus(activity.id, "failed");
       throw error;
     }
+  }
+
+  /** Fetch + decompress + parse the raw track from object storage. The samples
+   * were schema-validated on upload; `cleanSamples` re-guards them anyway. */
+  private async loadSamples(storageKey: string): Promise<Sample[]> {
+    const compressed = await this.objectStorage.get(storageKey);
+    const json = (await gunzipAsync(compressed)).toString("utf-8");
+    return JSON.parse(json) as Sample[];
   }
 }

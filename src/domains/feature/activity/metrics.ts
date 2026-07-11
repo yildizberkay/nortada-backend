@@ -9,19 +9,27 @@ import { haversineKm } from "@/packages/geo";
 export const ALGORITHM_VERSION = 1;
 
 // A raw sample. `speed` is the device's Doppler groundSpeed (more accurate than
-// position-derived); `hAccuracy` is horizontal accuracy in metres.
+// position-derived); `hAccuracy` is horizontal accuracy in metres; `sAccuracy`
+// is CoreLocation `speedAccuracy` in m/s (< 0 ⇒ the Doppler speed is invalid).
 export interface Sample {
   t: number; // seconds (epoch or session-relative — only deltas are used)
   lat: number;
   lon: number;
   speed?: number; // m/s
   hAccuracy?: number; // m
+  sAccuracy?: number; // m/s (CoreLocation speedAccuracy; < 0 ⇒ invalid)
 }
 
 // Reject samples worse than this horizontal accuracy (metres).
 const MAX_HACCURACY_M = 25;
 // Reject implausible speeds (~78 kt) as GPS spikes.
 const MAX_SPEED_MS = 40;
+// A Doppler reading may only set `maxSpeed` when its speedAccuracy is at least
+// this good (m/s) — guards a lone bad fix polluting the single-sample max.
+const MAX_SACCURACY_MS = 2;
+// …and when the position-derived speed corroborates at least this fraction of it
+// (a spike reads fast on Doppler but the track barely moved).
+const MAX_SPEED_CORROBORATION = 0.5;
 // Below this speed a sample counts as "not moving".
 const MOVING_THRESHOLD_MS = 1;
 // A time gap larger than this between samples is a tracking gap.
@@ -224,6 +232,7 @@ export function computeMetrics(rawSamples: Sample[]): MetricsResult {
   const cumDist: number[] = [0];
   let totalDistance = 0;
   let movingTime = 0;
+  let movingDistance = 0;
   let gapCount = 0;
   let maxSpeed = 0;
   let maxFromStart = 0;
@@ -234,23 +243,39 @@ export function computeMetrics(rawSamples: Sample[]): MetricsResult {
     const dt = cur.t - prev.t;
     let segDist = metresBetween(prev, cur);
 
-    // Spike rejection: an implausible jump-derived speed is discarded.
-    const derived = dt > 0 ? segDist / dt : Number.POSITIVE_INFINITY;
-    if (derived > MAX_SPEED_MS) segDist = 0;
+    // Position spike rejection: an implausible jump-derived speed drops the
+    // segment distance. `derived` is then 0 for a rejected segment, so it can
+    // never leak the 40 m/s cap into `maxSpeed` below.
+    if (dt > 0 && segDist / dt > MAX_SPEED_MS) segDist = 0;
+    const derived = dt > 0 ? segDist / dt : 0;
 
-    // Prefer the device's Doppler speed; fall back to derived.
-    let speed =
-      cur.speed != null && cur.speed >= 0 && cur.speed <= MAX_SPEED_MS
-        ? cur.speed
-        : dt > 0
-          ? segDist / dt
-          : 0;
-    if (speed > MAX_SPEED_MS) speed = 0;
+    // Prefer the device's Doppler speed (present, in range, accuracy not flagged
+    // invalid); fall back to the spike-rejected position-derived speed.
+    const dopplerOk =
+      cur.speed != null &&
+      cur.speed >= 0 &&
+      cur.speed <= MAX_SPEED_MS &&
+      (cur.sAccuracy == null || cur.sAccuracy >= 0);
+    const speed = dopplerOk ? (cur.speed as number) : derived;
 
     totalDistance += segDist;
     if (dt > GAP_THRESHOLD_SEC) gapCount++;
-    if (speed > MOVING_THRESHOLD_MS) movingTime += dt;
-    maxSpeed = Math.max(maxSpeed, speed);
+    if (speed > MOVING_THRESHOLD_MS) {
+      movingTime += dt;
+      movingDistance += segDist;
+    }
+
+    // maxSpeed is single-sample sensitive: only let a Doppler reading set it when
+    // its speedAccuracy is good AND position corroborates it; otherwise use the
+    // (already spike-rejected) derived speed.
+    const dopplerTrustedForMax =
+      dopplerOk &&
+      (cur.sAccuracy == null || cur.sAccuracy <= MAX_SACCURACY_MS) &&
+      derived >= (cur.speed as number) * MAX_SPEED_CORROBORATION;
+    maxSpeed = Math.max(
+      maxSpeed,
+      dopplerTrustedForMax ? (cur.speed as number) : derived,
+    );
     maxFromStart = Math.max(maxFromStart, metresBetween(start, cur));
 
     t.push(cur.t);
@@ -259,7 +284,9 @@ export function computeMetrics(rawSamples: Sample[]): MetricsResult {
 
   const durationSec = samples[samples.length - 1].t - samples[0].t;
   const avgSpeedMs = durationSec > 0 ? totalDistance / durationSec : 0;
-  const avgMovingSpeedMs = movingTime > 0 ? totalDistance / movingTime : 0;
+  // Moving-distance ÷ moving-time (NOT total distance) — idle drift must not
+  // inflate the moving average.
+  const avgMovingSpeedMs = movingTime > 0 ? movingDistance / movingTime : 0;
 
   const summary: SummaryValues = {
     totalDistanceM: totalDistance,

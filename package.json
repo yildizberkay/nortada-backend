@@ -26,6 +26,7 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1085.0",
     "@clerk/backend": "^3.4.4",
     "@hono/node-server": "^2.0.1",
     "@hono/standard-validator": "^0.2.3",

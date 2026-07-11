@@ -1,3 +1,5 @@
+import { gzipSync } from "node:zlib";
+
 import type { Activity } from "@/db";
 
 import type { ActivityRepository } from "../repositories/activity.repository";
@@ -14,6 +16,9 @@ const samples = Array.from({ length: 120 }, (_, i) => ({
   hAccuracy: 5,
 }));
 
+// The stored object: gzipped JSON, exactly as ActivityService writes it.
+const gzippedTrack = gzipSync(Buffer.from(JSON.stringify(samples)));
+
 const mockRepo = {
   findByUid: jest.fn(),
   findTrackByActivityId: jest.fn(),
@@ -23,18 +28,25 @@ const mockRepo = {
   setStatus: jest.fn(),
 } as unknown as jest.Mocked<ActivityRepository>;
 
+const mockObjectStorage = {
+  put: jest.fn(),
+  get: jest.fn(),
+  delete: jest.fn(),
+};
+
 describe("ActivityMetricsService", () => {
   let service: ActivityMetricsService;
 
   beforeEach(() => {
-    service = new ActivityMetricsService(mockRepo);
+    service = new ActivityMetricsService(mockRepo, mockObjectStorage);
   });
 
   it("computes + stores summary/route/efforts and marks ready", async () => {
     mockRepo.findByUid.mockResolvedValue(activity);
     mockRepo.findTrackByActivityId.mockResolvedValue({
-      samples,
+      storageKey: "activities/act-1/track.json.gz",
     } as never);
+    mockObjectStorage.get.mockResolvedValue(gzippedTrack);
 
     await service.computeAndStore("act-1");
 
@@ -58,7 +70,10 @@ describe("ActivityMetricsService", () => {
 
   it("marks the activity failed and rethrows on error", async () => {
     mockRepo.findByUid.mockResolvedValue(activity);
-    mockRepo.findTrackByActivityId.mockResolvedValue({ samples } as never);
+    mockRepo.findTrackByActivityId.mockResolvedValue({
+      storageKey: "activities/act-1/track.json.gz",
+    } as never);
+    mockObjectStorage.get.mockResolvedValue(gzippedTrack);
     mockRepo.upsertSummary.mockRejectedValue(new Error("db down"));
 
     await expect(service.computeAndStore("act-1")).rejects.toThrow("db down");

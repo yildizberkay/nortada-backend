@@ -488,7 +488,10 @@ export const activityTable = pgTable(
     customName: text("custom_name"),
     status: activityStatusEnum("status").notNull().default("processing"),
     source: activitySourceEnum("source").notNull().default("iphone"),
-    // Bumped when the raw track is (re)uploaded — L1 recompute keys off this.
+    // Provenance of the raw track that produced the current L1 metrics. Stored on
+    // each summary as `inputDataVersion`; reserved for a future corrected-track
+    // re-upload. (P0 uploads are write-once, so this stays 1; recompute keys off
+    // ALGORITHM_VERSION.)
     dataVersion: integer("data_version").notNull().default(1),
 
     // Time
@@ -533,8 +536,11 @@ export const activityTable = pgTable(
 export type Activity = typeof activityTable.$inferSelect;
 export type NewActivity = typeof activityTable.$inferInsert;
 
-// L0 — raw high-resolution GPS samples (immutable). One row per activity; samples
-// as jsonb (P0 <2MB — research/gps-tracking.md); move to object storage if larger.
+// L0 — raw high-resolution GPS samples (immutable). One row per activity. The
+// samples themselves live in object storage (S3, gzipped JSON) — too big for
+// Postgres — and this row keeps only the pointer + count. `storageKey` resolves
+// to an array of { t, lat, lon, speed?, hAccuracy?, sAccuracy? }, canonical SI
+// (see the `Sample` interface in metrics.ts).
 export const activityTrackTable = pgTable("activity_track", {
   id: idColumn(),
   uid: uidColumn(),
@@ -543,8 +549,7 @@ export const activityTrackTable = pgTable("activity_track", {
     .unique()
     .references(() => activityTable.id, { onDelete: "cascade" }),
   sampleCount: integer("sample_count").notNull(),
-  // Array of { t, lat, lon, groundSpeed?, hAccuracy?, ... } — canonical SI.
-  samples: jsonb("samples").$type<JsonValue>().notNull(),
+  storageKey: text("storage_key").notNull(),
   createdAt: createdAtColumn(),
 });
 export type ActivityTrack = typeof activityTrackTable.$inferSelect;

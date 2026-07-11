@@ -28,9 +28,116 @@ import {
 } from "@/db/schema";
 import { BaseRepository } from "@/domains/platform/foundation";
 
+// Explicit read allowlists (never SELECT *) — mirrors SpotRepository. Currently
+// all columns, so a future private/large column never surfaces implicitly.
+const activityColumns = {
+  id: true,
+  uid: true,
+  userId: true,
+  sport: true,
+  customName: true,
+  status: true,
+  source: true,
+  dataVersion: true,
+  startedAt: true,
+  endedAt: true,
+  timezone: true,
+  spotUid: true,
+  spotName: true,
+  startLat: true,
+  startLon: true,
+  endLat: true,
+  endLon: true,
+  device: true,
+  deviceModel: true,
+  osVersion: true,
+  appVersion: true,
+  notes: true,
+  feeling: true,
+  tags: true,
+  perceivedEffort: true,
+  privacy: true,
+  hideStart: true,
+  hiddenRadiusM: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const activityTrackColumns = {
+  id: true,
+  uid: true,
+  activityId: true,
+  sampleCount: true,
+  storageKey: true,
+  createdAt: true,
+} as const;
+
+const activityConditionColumns = {
+  id: true,
+  uid: true,
+  activityId: true,
+  kind: true,
+  provider: true,
+  windSpeedMs: true,
+  windGustsMs: true,
+  windDirectionDeg: true,
+  temperatureC: true,
+  weatherCode: true,
+  capturedAt: true,
+  createdAt: true,
+} as const;
+
+const activitySummaryColumns = {
+  id: true,
+  uid: true,
+  activityId: true,
+  totalDistanceM: true,
+  maxSpeedMs: true,
+  avgSpeedMs: true,
+  avgMovingSpeedMs: true,
+  durationSec: true,
+  movingDurationSec: true,
+  maxDistanceFromStartM: true,
+  validSampleCount: true,
+  gapCount: true,
+  algorithmVersion: true,
+  inputDataVersion: true,
+  computedAt: true,
+} as const;
+
+const activityRouteColumns = {
+  id: true,
+  uid: true,
+  activityId: true,
+  polyline: true,
+  algorithmVersion: true,
+  computedAt: true,
+} as const;
+
+const activityEffortColumns = {
+  id: true,
+  uid: true,
+  activityId: true,
+  type: true,
+  resultMs: true,
+  durationSec: true,
+  distanceM: true,
+  startOffsetSec: true,
+  algorithmVersion: true,
+  computedAt: true,
+} as const;
+
 export interface ActivityWithSummary {
   activity: Activity;
   summary: ActivitySummary | null;
+}
+
+/** L0 ingest payload — written in one transaction so track + conditions +
+ * equipment links can never diverge on a partial failure. */
+export interface IngestTrackInput {
+  track: NewActivityTrack;
+  conditions: NewActivityCondition[];
+  equipmentLinks: NewActivityEquipment[];
 }
 
 export class ActivityRepository extends BaseRepository {
@@ -54,6 +161,7 @@ export class ActivityRepository extends BaseRepository {
 
   async findByUid(uid: string): Promise<Activity | undefined> {
     return this.dbClient.query.activity.findFirst({
+      columns: activityColumns,
       where: eq(activityTable.uid, uid),
     });
   }
@@ -63,6 +171,7 @@ export class ActivityRepository extends BaseRepository {
     userId: number,
   ): Promise<Activity | undefined> {
     return this.dbClient.query.activity.findFirst({
+      columns: activityColumns,
       where: and(eq(activityTable.uid, uid), eq(activityTable.userId, userId)),
     });
   }
@@ -124,43 +233,56 @@ export class ActivityRepository extends BaseRepository {
 
   // ── L0 children ──────────────────────────────────────────────────────────────
 
-  async insertTrack(values: NewActivityTrack): Promise<void> {
-    await this.dbClient
-      .insert(activityTrackTable)
-      .values(values)
-      .onConflictDoNothing({ target: activityTrackTable.activityId });
+  /** Ingest the immutable L0 track + its conditions + equipment links in ONE
+   * transaction (so a partial failure never leaves a track without its context).
+   * All inserts are conflict-safe, so a retried upload is a no-op. */
+  async ingestTrack(input: IngestTrackInput): Promise<void> {
+    await this.dbClient.transaction(async (tx) => {
+      await tx
+        .insert(activityTrackTable)
+        .values(input.track)
+        .onConflictDoNothing({ target: activityTrackTable.activityId });
+      if (input.conditions.length > 0) {
+        await tx
+          .insert(activityConditionTable)
+          .values(input.conditions)
+          .onConflictDoNothing();
+      }
+      if (input.equipmentLinks.length > 0) {
+        await tx
+          .insert(activityEquipmentTable)
+          .values(input.equipmentLinks)
+          .onConflictDoNothing();
+      }
+    });
+  }
+
+  /** Cheap existence probe for the idempotency guard — never pulls the samples
+   * jsonb blob (unlike `findTrackByActivityId`). */
+  async trackExists(activityId: number): Promise<boolean> {
+    const row = await this.dbClient.query.activityTrack.findFirst({
+      columns: { id: true },
+      where: eq(activityTrackTable.activityId, activityId),
+    });
+    return row !== undefined;
   }
 
   async findTrackByActivityId(
     activityId: number,
   ): Promise<ActivityTrack | undefined> {
     return this.dbClient.query.activityTrack.findFirst({
+      columns: activityTrackColumns,
       where: eq(activityTrackTable.activityId, activityId),
     });
-  }
-
-  async insertConditions(values: NewActivityCondition[]): Promise<void> {
-    if (values.length === 0) return;
-    await this.dbClient
-      .insert(activityConditionTable)
-      .values(values)
-      .onConflictDoNothing();
   }
 
   async findConditionsByActivityId(
     activityId: number,
   ): Promise<ActivityCondition[]> {
-    return this.dbClient
-      .select()
-      .from(activityConditionTable)
-      .where(eq(activityConditionTable.activityId, activityId));
-  }
-
-  async insertEquipmentLink(values: NewActivityEquipment): Promise<void> {
-    await this.dbClient
-      .insert(activityEquipmentTable)
-      .values(values)
-      .onConflictDoNothing();
+    return this.dbClient.query.activityCondition.findMany({
+      columns: activityConditionColumns,
+      where: eq(activityConditionTable.activityId, activityId),
+    });
   }
 
   // ── L1 derived (recomputable) ─────────────────────────────────────────────────
@@ -180,6 +302,7 @@ export class ActivityRepository extends BaseRepository {
     activityId: number,
   ): Promise<ActivitySummary | undefined> {
     return this.dbClient.query.activitySummary.findFirst({
+      columns: activitySummaryColumns,
       where: eq(activitySummaryTable.activityId, activityId),
     });
   }
@@ -196,6 +319,7 @@ export class ActivityRepository extends BaseRepository {
     activityId: number,
   ): Promise<ActivityRoute | undefined> {
     return this.dbClient.query.activityRoute.findFirst({
+      columns: activityRouteColumns,
       where: eq(activityRouteTable.activityId, activityId),
     });
   }
@@ -214,10 +338,10 @@ export class ActivityRepository extends BaseRepository {
   }
 
   async findEffortsByActivityId(activityId: number): Promise<ActivityEffort[]> {
-    return this.dbClient
-      .select()
-      .from(activityEffortTable)
-      .where(eq(activityEffortTable.activityId, activityId));
+    return this.dbClient.query.activityEffort.findMany({
+      columns: activityEffortColumns,
+      where: eq(activityEffortTable.activityId, activityId),
+    });
   }
 
   /** Merge hook (D-008): move the user's activities to the target account. */

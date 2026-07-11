@@ -19,6 +19,8 @@ const sampleSchema = z.object({
   lon: z.number().min(-180).max(180),
   speed: z.number().min(0).optional(),
   hAccuracy: z.number().min(0).optional(),
+  // CoreLocation speedAccuracy (m/s); < 0 means the Doppler speed is invalid.
+  sAccuracy: z.number().optional(),
 });
 
 // Forecast snapshot the app already showed the user (observed obs is a later

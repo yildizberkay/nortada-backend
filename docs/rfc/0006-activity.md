@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | 0006 |
 | **Başlık** | Aktivite/Seans (4 katman, GPS upload, kanonik metrik) |
-| **Status** | 🚧 In Progress |
+| **Status** | ✅ Completed |
 | **Step** | 5 |
 | **Depends on** | RFC-0002 (user), RFC-0004 (spot), RFC-0005 (conditions) |
 | **Domain(ler)** | feature/session |
@@ -42,7 +42,7 @@ App tracking'i şu an tamamen simüle (gerçek GPS yok, peak split'ler sahte). B
 - `activity-compute-metrics` — `schemaTask`: ham track'i parse et → kanonik metrik/effort yaz → `activity_route` polyline → status=ready. Algoritma sürümü artınca eski seanslarda yeniden çalıştırılabilir (recompute).
 
 ## 8. Bağımlılıklar & entegrasyonlar
-Conditions snapshot için Weather (RFC-0005) — kayıt anındaki forecast + (ileride observed). Spot (RFC-0004). Ham track büyürse object storage (R2/S3 presigned, brandscale deseni); P0'da Postgres blob yeterli (<2MB, [[research/gps-tracking]]).
+Conditions snapshot için Weather (RFC-0005) — kayıt anındaki forecast + (ileride observed). Spot (RFC-0004). **Ham track object storage'da (S3/R2, gzipli JSON)** — `activity_track` satırı yalnız `storage_key` + `sample_count` tutar; samples S3'te. `ObjectStorage` port'u (`src/packages/object-storage`), `S3ObjectStorage` adaptörü (`@aws-sdk/client-s3`). Upload gzipli JSON'ı S3'e yazar (DB transaction dışında), metrik task S3'ten okur. Karar [[../otonom-kararlar]] §30 (Berkay 2026-07-11). Config: `OBJECT_STORAGE_*` env; prod'da `OBJECT_STORAGE_BUCKET` zorunlu.
 
 ## 9. Güvenlik & gizlilik
 Ham konum track'i hassas — user-scoped, `privacy` (private/followers/public), `hideStart`/`hiddenRadius`. Rest'te şifreleme. Kullanıcı verisinin sahibi.
@@ -54,7 +54,7 @@ Ham konum track'i hassas — user-scoped, `privacy` (private/followers/public), 
 1. P0 tabloları (activity/track/condition/summary/route/effort/equipment/activity_equipment). 2. errors/schemas. 3. repositories (+reassign). 4. `ActivityService` + `ActivityMetricsService` + `EquipmentService` (+spec). 5. `activity-compute-metrics` task. 6. routes + module + register. 7. lint/type/test.
 
 ## 12. Açık sorular
-- Ham track: Postgres blob mu object storage mu (P0 Postgres, büyürse storage)?
+- ~~Ham track: Postgres blob mu object storage mu?~~ **ÇÖZÜLDÜ → S3 object storage** (Berkay 2026-07-11, [[../otonom-kararlar]] §30).
 - Kanonik metrik seti P0 kesin listesi — [[metrics-catalog]] A ✅ set ile hizala (kullanıcı uygulamadan kesinleştirecek).
 
 ## 13. Referanslar

@@ -1,12 +1,19 @@
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
+
 import type {
   Activity,
   ActivityCondition,
   ActivitySummary,
   JsonValue,
   NewActivity,
+  NewActivityCondition,
+  NewActivityEquipment,
 } from "@/db";
 import { BaseUseCase } from "@/domains/platform/foundation";
 import { GenericError } from "@/packages/error";
+import { createLogger } from "@/packages/logger";
+import type { ObjectStorage } from "@/packages/object-storage";
 import type { RequestUser } from "@/types";
 
 import { ActivityReason } from "../errors";
@@ -17,6 +24,14 @@ import type {
 import type { EquipmentRepository } from "../repositories/equipment.repository";
 import type { CreateActivityInput, PatchActivityInput } from "../schemas";
 import { triggerActivityComputeMetrics } from "../tasks/activity-compute-metrics.trigger";
+
+const log = createLogger("ActivityService");
+const gzipAsync = promisify(gzip);
+
+/** S3 key for an activity's immutable raw track. Deterministic from the uid, so
+ * a re-upload overwrites the same object (idempotent). */
+const trackStorageKey = (activityUid: string) =>
+  `activities/${activityUid}/track.json.gz`;
 
 const toSummaryDto = (s: ActivitySummary | null) =>
   s
@@ -56,14 +71,17 @@ export class ActivityService extends BaseUseCase {
   constructor(
     private readonly activityRepository: ActivityRepository,
     private readonly equipmentRepository: EquipmentRepository,
+    private readonly objectStorage: ObjectStorage,
   ) {
     super();
   }
 
   /**
    * Store an uploaded session (idempotent on the client-generated uid) and
-   * enqueue canonical metric computation. A retried upload is a no-op: the
-   * activity already exists and its track is already stored.
+   * enqueue canonical metric computation. A retried upload never re-ingests the
+   * immutable L0 track, but WILL re-enqueue compute while the activity is still
+   * `processing` — so an upload whose enqueue previously failed recovers instead
+   * of stranding forever.
    */
   async create(user: RequestUser, input: CreateActivityInput) {
     const first = input.samples[0];
@@ -90,53 +108,106 @@ export class ActivityService extends BaseUseCase {
       appVersion: input.appVersion ?? null,
     });
 
-    // Idempotency guard: only ingest + enqueue when this is a fresh upload.
-    const existingTrack = await this.activityRepository.findTrackByActivityId(
+    // Ownership guard: the client-generated uid collided with a DIFFERENT user's
+    // activity. Never mutate another user's aggregate — refuse (409). Reads are
+    // already user-scoped; this closes the write-side IDOR.
+    if (activity.userId !== user.id) {
+      throw new GenericError("ALREADY_EXISTS", {
+        reason: ActivityReason.ALREADY_EXISTS,
+        message: "An activity with this id already exists",
+      });
+    }
+
+    // Idempotency: ingest the immutable L0 track exactly once. `trackExists` is a
+    // cheap probe that never pulls the samples blob.
+    const alreadyIngested = await this.activityRepository.trackExists(
       activity.id,
     );
-    if (!existingTrack) {
-      await this.activityRepository.insertTrack({
-        activityId: activity.id,
-        sampleCount: input.samples.length,
-        samples: input.samples as unknown as JsonValue,
+    if (!alreadyIngested) {
+      const conditions: NewActivityCondition[] = input.conditions
+        ? [
+            {
+              activityId: activity.id,
+              kind: "forecast",
+              windSpeedMs: input.conditions.windSpeedMs ?? null,
+              windGustsMs: input.conditions.windGustsMs ?? null,
+              windDirectionDeg: input.conditions.windDirectionDeg ?? null,
+              temperatureC: input.conditions.temperatureC ?? null,
+              weatherCode: input.conditions.weatherCode ?? null,
+              capturedAt: new Date(input.startedAt),
+            },
+          ]
+        : [];
+
+      const equipmentLinks = await this.resolveEquipmentLinks(
+        user.id,
+        activity.id,
+        input.equipment,
+      );
+
+      // Store the immutable raw track in object storage (gzipped JSON) BEFORE the
+      // DB write — external I/O must not sit inside the DB transaction. The key is
+      // deterministic, so a retry overwrites the same object; a rare orphan (S3
+      // written, DB not) is reclaimed by the next retry.
+      const storageKey = trackStorageKey(activity.uid);
+      const body = await gzipAsync(Buffer.from(JSON.stringify(input.samples)));
+      await this.objectStorage.put(storageKey, body, {
+        contentType: "application/json",
+        contentEncoding: "gzip",
       });
 
-      if (input.conditions) {
-        await this.activityRepository.insertConditions([
-          {
-            activityId: activity.id,
-            kind: "forecast",
-            windSpeedMs: input.conditions.windSpeedMs ?? null,
-            windGustsMs: input.conditions.windGustsMs ?? null,
-            windDirectionDeg: input.conditions.windDirectionDeg ?? null,
-            temperatureC: input.conditions.temperatureC ?? null,
-            weatherCode: input.conditions.weatherCode ?? null,
-            capturedAt: new Date(input.startedAt),
-          },
-        ]);
-      }
+      await this.activityRepository.ingestTrack({
+        track: {
+          activityId: activity.id,
+          sampleCount: input.samples.length,
+          storageKey,
+        },
+        conditions,
+        equipmentLinks,
+      });
+    }
 
-      if (input.equipment) {
-        for (const item of input.equipment) {
-          const profile = await this.equipmentRepository.findByUidForUser(
-            item.equipmentUid,
-            user.id,
-          );
-          if (profile) {
-            await this.activityRepository.insertEquipmentLink({
-              activityId: activity.id,
-              equipmentProfileId: profile.id,
-              role: item.role ?? null,
-              snapshot: (profile.attributes ?? null) as JsonValue,
-            });
-          }
-        }
-      }
-
+    // Enqueue keyed on status (NOT on track existence), so a retry after a failed
+    // enqueue re-enqueues. `computeAndStore` is idempotent, so a rare double
+    // enqueue (concurrent uploads) is harmless; a `failed` activity is left alone
+    // (re-uploading the same immutable track can't change the outcome).
+    if (activity.status === "processing") {
       await triggerActivityComputeMetrics(activity.uid);
     }
 
     return { uid: activity.uid, status: activity.status };
+  }
+
+  /** Resolve the upload's equipment refs to owned profiles. An unresolved ref is
+   * skipped (best-effort attach never fails the session upload) but logged so the
+   * drop is observable. */
+  private async resolveEquipmentLinks(
+    userId: number,
+    activityId: number,
+    equipment: CreateActivityInput["equipment"],
+  ): Promise<NewActivityEquipment[]> {
+    if (!equipment) return [];
+    const links: NewActivityEquipment[] = [];
+    for (const item of equipment) {
+      const profile = await this.equipmentRepository.findByUidForUser(
+        item.equipmentUid,
+        userId,
+      );
+      if (profile) {
+        links.push({
+          activityId,
+          equipmentProfileId: profile.id,
+          role: item.role ?? null,
+          snapshot: (profile.attributes ?? null) as JsonValue,
+        });
+      } else {
+        log.warn("Skipped unresolved equipment ref on upload", {
+          activityId,
+          equipmentUid: item.equipmentUid,
+        });
+      }
+    }
+    return links;
   }
 
   async list(

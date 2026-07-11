@@ -5,6 +5,18 @@ import type { DBExecutor } from "@/db/db.manager";
 import { equipmentProfileTable } from "@/db/schema";
 import { BaseRepository } from "@/domains/platform/foundation";
 
+// Explicit read allowlist (never SELECT *) — mirrors SpotRepository.
+const equipmentProfileColumns = {
+  id: true,
+  uid: true,
+  userId: true,
+  type: true,
+  name: true,
+  attributes: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 export class EquipmentRepository extends BaseRepository {
   constructor(externalDBManager?: DBManager) {
     super(externalDBManager);
@@ -19,11 +31,11 @@ export class EquipmentRepository extends BaseRepository {
   }
 
   async listByUser(userId: number): Promise<EquipmentProfile[]> {
-    return this.dbClient
-      .select()
-      .from(equipmentProfileTable)
-      .where(eq(equipmentProfileTable.userId, userId))
-      .orderBy(desc(equipmentProfileTable.createdAt));
+    return this.dbClient.query.equipmentProfile.findMany({
+      columns: equipmentProfileColumns,
+      where: eq(equipmentProfileTable.userId, userId),
+      orderBy: desc(equipmentProfileTable.createdAt),
+    });
   }
 
   async findByUidForUser(
@@ -31,6 +43,7 @@ export class EquipmentRepository extends BaseRepository {
     userId: number,
   ): Promise<EquipmentProfile | undefined> {
     return this.dbClient.query.equipmentProfile.findFirst({
+      columns: equipmentProfileColumns,
       where: and(
         eq(equipmentProfileTable.uid, uid),
         eq(equipmentProfileTable.userId, userId),

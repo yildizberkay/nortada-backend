@@ -51,6 +51,18 @@ export interface Config {
     forecastUrl: string;
     marineUrl: string;
   };
+
+  // Object storage — the raw GPS track blob store (RFC-0006, S3/R2/MinIO). Bucket
+  // is optional so local/dev/tests boot without it; the S3 client fails clearly
+  // at first use if unset, and prod requires it (env refine below).
+  objectStorage: {
+    bucket?: string;
+    region: string;
+    endpoint?: string;
+    accessKeyId?: string;
+    secretAccessKey?: string;
+    forcePathStyle: boolean;
+  };
 }
 
 // Whether we are running inside the Trigger.dev worker. Background tasks never
@@ -82,6 +94,12 @@ const envSchema = z
     OPEN_METEO_MARINE_URL: z
       .string()
       .default("https://marine-api.open-meteo.com/v1"),
+    OBJECT_STORAGE_BUCKET: z.string().optional(),
+    OBJECT_STORAGE_REGION: z.string().default("auto"),
+    OBJECT_STORAGE_ENDPOINT: z.string().optional(),
+    OBJECT_STORAGE_ACCESS_KEY_ID: z.string().optional(),
+    OBJECT_STORAGE_SECRET_ACCESS_KEY: z.string().optional(),
+    OBJECT_STORAGE_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
   })
   .superRefine((val, ctx) => {
     // In production a short/empty HS256 key signs forgeable device tokens.
@@ -94,6 +112,15 @@ const envSchema = z
         code: "custom",
         message: "AUTH_ANONYMOUS_JWT_SECRET must be ≥32 chars in production",
         path: ["AUTH_ANONYMOUS_JWT_SECRET"],
+      });
+    }
+    // Object storage backs the raw GPS track for BOTH the HTTP upload and the
+    // Trigger metrics read, so it's required in prod regardless of worker role.
+    if (val.ENVIRONMENT === "prod" && !val.OBJECT_STORAGE_BUCKET) {
+      ctx.addIssue({
+        code: "custom",
+        message: "OBJECT_STORAGE_BUCKET is required in production",
+        path: ["OBJECT_STORAGE_BUCKET"],
       });
     }
   });
@@ -145,6 +172,14 @@ export class GlobalConfig {
       openMeteo: {
         forecastUrl: env.OPEN_METEO_BASE_URL,
         marineUrl: env.OPEN_METEO_MARINE_URL,
+      },
+      objectStorage: {
+        bucket: env.OBJECT_STORAGE_BUCKET,
+        region: env.OBJECT_STORAGE_REGION,
+        endpoint: env.OBJECT_STORAGE_ENDPOINT,
+        accessKeyId: env.OBJECT_STORAGE_ACCESS_KEY_ID,
+        secretAccessKey: env.OBJECT_STORAGE_SECRET_ACCESS_KEY,
+        forcePathStyle: env.OBJECT_STORAGE_FORCE_PATH_STYLE === "true",
       },
     };
   }

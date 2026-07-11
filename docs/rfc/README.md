@@ -15,7 +15,7 @@ Bağımlılık sırasına göre. Her step bir öncekinin üstüne kurulur.
 | **2** | [0003](0003-user-profile.md) | User & Profil (user_profile, user_sport_profile, birimler; favoriler→0004) | platform/user | ✅ Completed |
 | **3** | [0004](0004-spot.md) | Spot (şema + geo nearby/search + OSM sourcing + Suggest Spot + favoriler + admin) | feature/spot | ✅ Completed |
 | **4** | [0005](0005-weather.md) | Hava (Open-Meteo forecast/marine, decision+best-window, talep-güdümlü cache + Trigger tazeleme) | feature/weather | ✅ Completed |
-| **5** | [0006](0006-activity.md) | Aktivite/Seans (4 katman, ham track upload, kanonik metrik hesabı, effort/interval/maneuver, ekipman) | feature/session | 🟡 Draft |
+| **5** | [0006](0006-activity.md) | Aktivite/Seans (4 katman, ham track upload, kanonik metrik hesabı, effort/interval/maneuver, ekipman) | feature/session | ✅ Completed (P0) |
 | _sonra_ | [0007](0007-insights.md) | Insights (seans birikiminden örüntüler, dönem özetleri) | feature/insights | 🗓️ Deferred |
 | _sonra_ | [0008](0008-alerts.md) | Alarmlar (kural + değerlendirme cron + push) | feature/alert | 🗓️ Deferred |
 | _en son_ | [0009](0009-subscription-notification.md) | Abonelik (RevenueCat) + Notification (APNs push) | platform/subscription, platform/notification | 🗓️ Deferred |

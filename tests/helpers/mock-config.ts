@@ -25,6 +25,11 @@ export function createMockConfig(overrides?: Partial<Config>): Config {
       forecastUrl: "https://open-meteo.test/v1",
       marineUrl: "https://marine.open-meteo.test/v1",
     },
+    objectStorage: {
+      bucket: "test-bucket",
+      region: "auto",
+      forcePathStyle: false,
+    },
     ...overrides,
   };
 }
