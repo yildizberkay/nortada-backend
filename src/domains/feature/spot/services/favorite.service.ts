@@ -21,7 +21,9 @@ export class FavoriteService extends BaseUseCase {
   }
 
   async add(user: RequestUser, spotUid: string): Promise<SpotResponse> {
-    const spot = await this.resolveSpot(spotUid);
+    // Only published spots can be favorited (a pending/rejected spot must not
+    // leak into the list or the weather hot-set, D-004).
+    const spot = await this.resolveSpot(spotUid, true);
     const added = await this.favoriteRepository.add(user.id, spot.id);
     if (!added) {
       throw new GenericError("ALREADY_EXISTS", {
@@ -33,7 +35,9 @@ export class FavoriteService extends BaseUseCase {
   }
 
   async remove(user: RequestUser, spotUid: string): Promise<void> {
-    const spot = await this.resolveSpot(spotUid);
+    // Unfavoriting allows any status — a spot that was later unpublished must
+    // still be removable so the user isn't stranded with a dead favorite.
+    const spot = await this.resolveSpot(spotUid, false);
     const removed = await this.favoriteRepository.remove(user.id, spot.id);
     if (!removed) {
       throw new GenericError("NOT_FOUND", {
@@ -43,9 +47,9 @@ export class FavoriteService extends BaseUseCase {
     }
   }
 
-  private async resolveSpot(spotUid: string) {
+  private async resolveSpot(spotUid: string, requirePublished: boolean) {
     const spot = await this.spotRepository.findByUid(spotUid);
-    if (!spot) {
+    if (!spot || (requirePublished && spot.status !== "published")) {
       throw new GenericError("NOT_FOUND", {
         reason: SpotReason.NOT_FOUND,
         message: "Spot not found",

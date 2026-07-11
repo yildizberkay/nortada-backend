@@ -31,14 +31,20 @@ export function buildContainer(db: DBManager) {
   //   const activity = createActivityModule({ ...deps, weatherService: weather.weatherService });
   const deps: ModuleDeps = { db };
 
-  const auth = createAuthModule(deps);
+  // Spot is built before auth so its merge hook (favorites reassign, D-008) can
+  // be threaded into the auth module explicitly.
   const user = createUserModule(deps);
   const spot = createSpotModule(deps);
+  const { favoriteReassigner, ...spotServices } = spot;
+  const auth = createAuthModule({
+    ...deps,
+    mergeReassigners: [favoriteReassigner],
+  });
 
   return {
     ...auth,
     ...user,
-    ...spot,
+    ...spotServices,
   };
 }
 

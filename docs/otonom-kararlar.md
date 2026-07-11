@@ -328,4 +328,38 @@ dolduracak. Havada bırakmıyorum — RFC-0003'ün işi.
 
 ---
 
+---
+
+# RFC-0004 (Spot) kararları
+
+## 22. Merge reassign ARTIK KURULDU — favoriler ilk transfer edilen veri ✅ (review-driven, D-008 tetiklendi)
+
+**Karar:** RFC-0004 favorileri getirdiği için D-008'in tetik koşulu doldu; merge
+reassign seam'i **kurdum**. Mekanizma:
+- `MergeReassigner` tipi (`src/types.ts`): `(fromUserId, toUserId, tx) => Promise<void>`.
+- Her veri-sahibi domain modülü bir reassigner döndürür (spot → `favoriteReassigner`).
+- Composition root (`container.ts`) bunları toplayıp `createAuthModule`'a **açıkça**
+  geçer (auth feature domainini import etmez — platform↛feature korunur).
+- `AuthService.linkAnonymousToClerk` branch-2 artık **tek transaction** açıyor
+  (`userRepository.transaction`): önce tüm reassigner'lar (tx), sonra `markMergedInto(tx)`
+  — atomik. Branch-1 (upgrade-in-place, aynı user.id) zaten her şeyi koruyor.
+- `FavoriteRepository.reassignOwner` `(userId, spotId)` unique'i dedup ederek taşır
+  (hedefte olan spotları önce siler, kalanı update eder).
+
+**Neden:** principal-review HIGH — favoriler merge branch-2'de sessizce kayboluyordu.
+D-008 "gerçek veri gelince transaction'lı reassign kur" diyordu; favoriler o veri.
+Cross-domain transaction, `DBExecutor` (`PgDatabase<any,any,any>`) tipiyle threadleniyor
+(hem client hem tx bunu sağlar). [[decisions]] D-008 güncellendi.
+
+## 23. Diğer RFC-0004 review düzeltmeleri ✅ (review-driven)
+
+- **ON CONFLICT partial-index:** `bulkInsertOsmPending` `onConflictDoNothing({ target: osmId, where: osm_id IS NOT NULL })` — partial unique index'i eşleştirir (aksi halde 42P10 runtime hatası; canlı DB testi olmadığı için build'de yakalanamadı — [[../otonom-kararlar]] §0).
+- **Trigger reference pattern sağlamlaştırıldı:** `buildContainer` artık `try` içinde (pool leak yok); `retry: {maxAttempts:3}` + `queue: {concurrencyLimit:1}` (dış API'leri rate-limit'e karşı; her external-API task'i bunu kopyalamalı).
+- **boundingBox:** enlem [-90,90] clamp + `longitudeRanges` ile antimeridian (±180) sarması → repo lon filtresi OR'lu (global mimari, RFC-0005 wind-field bunu kullanacak).
+- **requireAdmin** + **OverpassClient** testleri eklendi (fail-closed authz + external-service hata dalları).
+- **Favorileme** sadece `published` spot'a (add); unfavorite her statüde (kullanıcı stranded kalmasın). Suggest schema uppercase; `moderateSpotSchema`'ya country/region/locality; searchByName LIKE metachar escape.
+- shoreBearing coastline-tangent otomatik türetme **P1** (küratör şimdilik elle set eder); `spot-model-and-sourcing.md` netleştirildi: `shoreBearingDeg` = kıyıdan denize bakan **dış normal** (tangent değil — türetmede 180° belirsizliği tangent→normal çevrilmeli).
+
+---
+
 *(Sonraki RFC'lerde verilen kararlar bu dosyaya eklenmeye devam edecek.)*

@@ -68,17 +68,22 @@ const mockRepo = {
   createClerkUser: jest.fn(),
   tryUpgradeAnonymousToClerk: jest.fn(),
   markMergedInto: jest.fn(),
+  transaction: jest.fn(),
 } as unknown as jest.Mocked<UserRepository>;
 
 const mockClerk = {
   verifyToken: jest.fn(),
 } as unknown as jest.Mocked<ClerkService>;
 
+const mockReassigner = jest.fn();
+
 describe("AuthService", () => {
   let service: AuthService;
 
   beforeEach(() => {
-    service = new AuthService(mockRepo, mockClerk);
+    service = new AuthService(mockRepo, mockClerk, [mockReassigner]);
+    // Run the merge transaction callback immediately with a fake executor.
+    mockRepo.transaction.mockImplementation(async (fn) => fn({} as never));
   });
 
   describe("issueAnonymous", () => {
@@ -257,7 +262,9 @@ describe("AuthService", () => {
         "clerk-token",
       );
 
-      expect(mockRepo.markMergedInto).toHaveBeenCalledWith(1, existing.id);
+      // Reassign runs before the anon row is retired, inside the transaction.
+      expect(mockReassigner).toHaveBeenCalledWith(1, existing.id, {});
+      expect(mockRepo.markMergedInto).toHaveBeenCalledWith(1, existing.id, {});
       expect(mockRepo.tryUpgradeAnonymousToClerk).not.toHaveBeenCalled();
       expect(result).toBe(existing);
     });
@@ -279,7 +286,7 @@ describe("AuthService", () => {
       );
 
       expect(mockRepo.tryUpgradeAnonymousToClerk).toHaveBeenCalled();
-      expect(mockRepo.markMergedInto).toHaveBeenCalledWith(1, winner.id);
+      expect(mockRepo.markMergedInto).toHaveBeenCalledWith(1, winner.id, {});
       expect(result).toBe(winner);
     });
   });

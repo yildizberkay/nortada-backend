@@ -30,11 +30,40 @@ export function boundingBox(
   const lonDelta =
     Math.abs(cosLat) < 1e-6 ? 180 : radiusKm / (KM_PER_DEG_LAT * cosLat);
   return {
-    latMin: lat - latDelta,
-    latMax: lat + latDelta,
+    // Latitude clamps hard (can't wrap past the poles).
+    latMin: Math.max(-90, lat - latDelta),
+    latMax: Math.min(90, lat + latDelta),
+    // Longitude may spill past ±180; the ranges below handle the wrap.
     lonMin: lon - lonDelta,
     lonMax: lon + lonDelta,
   };
+}
+
+/**
+ * Split a possibly-out-of-range [lonMin, lonMax] into 1–2 in-range
+ * [min, max] segments, wrapping across the antimeridian (±180°). A query near
+ * 179.9° then still matches a spot at −179.9°. The repository ORs these into
+ * its longitude predicate.
+ */
+export function longitudeRanges(
+  lonMin: number,
+  lonMax: number,
+): Array<[number, number]> {
+  // Radius already spans the whole globe longitudinally (near a pole).
+  if (lonMin <= -180 && lonMax >= 180) return [[-180, 180]];
+  if (lonMin < -180) {
+    return [
+      [-180, lonMax],
+      [lonMin + 360, 180],
+    ];
+  }
+  if (lonMax > 180) {
+    return [
+      [lonMin, 180],
+      [-180, lonMax - 360],
+    ];
+  }
+  return [[lonMin, lonMax]];
 }
 
 /** Great-circle distance in km between two lat/lon points. */

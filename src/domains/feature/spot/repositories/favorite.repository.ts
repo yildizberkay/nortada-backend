@@ -1,6 +1,7 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import type { DBManager, Spot } from "@/db";
+import type { DBExecutor } from "@/db/db.manager";
 import { favoriteTable, spotTable } from "@/db/schema";
 import { BaseRepository } from "@/domains/platform/foundation";
 
@@ -41,5 +42,36 @@ export class FavoriteRepository extends BaseRepository {
       )
       .returning({ id: favoriteTable.id });
     return deleted.length > 0;
+  }
+
+  /**
+   * Move an anonymous user's favorites to the target on account-link (D-008).
+   * Runs on the caller's transaction executor so it's atomic with the rest of
+   * the merge. Drops source rows that would collide with a favorite the target
+   * already has (the `(user_id, spot_id)` unique) before moving the rest.
+   */
+  async reassignOwner(
+    fromUserId: number,
+    toUserId: number,
+    tx: DBExecutor,
+  ): Promise<void> {
+    const targetSpotIds = tx
+      .select({ spotId: favoriteTable.spotId })
+      .from(favoriteTable)
+      .where(eq(favoriteTable.userId, toUserId));
+
+    await tx
+      .delete(favoriteTable)
+      .where(
+        and(
+          eq(favoriteTable.userId, fromUserId),
+          inArray(favoriteTable.spotId, targetSpotIds),
+        ),
+      );
+
+    await tx
+      .update(favoriteTable)
+      .set({ userId: toUserId })
+      .where(eq(favoriteTable.userId, fromUserId));
   }
 }

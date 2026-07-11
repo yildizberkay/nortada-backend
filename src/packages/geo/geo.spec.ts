@@ -1,4 +1,4 @@
-import { boundingBox, haversineKm, windSide } from "./index";
+import { boundingBox, haversineKm, longitudeRanges, windSide } from "./index";
 
 describe("geo", () => {
   describe("haversineKm", () => {
@@ -31,6 +31,36 @@ describe("geo", () => {
       const nearLat = 38.345;
       expect(nearLat).toBeGreaterThan(bb.latMin);
       expect(nearLat).toBeLessThan(bb.latMax);
+    });
+
+    it("clamps latitude near the poles", () => {
+      const bb = boundingBox(89.99, 0, 50);
+      expect(bb.latMax).toBeLessThanOrEqual(90);
+    });
+  });
+
+  describe("longitudeRanges", () => {
+    it("returns a single range when in bounds", () => {
+      expect(longitudeRanges(20, 30)).toEqual([[20, 30]]);
+    });
+
+    it("wraps past +180 into two ranges", () => {
+      // A query near 179.9 with a bbox reaching 180.5 must also match -179.5.
+      expect(longitudeRanges(179, 180.5)).toEqual([
+        [179, 180],
+        [-180, -179.5],
+      ]);
+    });
+
+    it("wraps past -180 into two ranges", () => {
+      expect(longitudeRanges(-180.5, -179)).toEqual([
+        [-180, -179],
+        [179.5, 180],
+      ]);
+    });
+
+    it("collapses to the full span when the radius circles the globe", () => {
+      expect(longitudeRanges(-200, 200)).toEqual([[-180, 180]]);
     });
   });
 

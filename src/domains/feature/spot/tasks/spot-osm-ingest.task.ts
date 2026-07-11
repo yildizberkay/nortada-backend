@@ -24,12 +24,17 @@ export const spotOsmIngestTask = schemaTask({
   schema: spotOsmIngestSchema,
   // Overpass can take ~90s for a whole country.
   maxDuration: 300,
+  retry: { maxAttempts: 3 },
+  // Bound concurrency: Overpass (like most external data APIs) rate-limits by
+  // IP — never fan out. Every external-API task should copy this.
+  queue: { concurrencyLimit: 1 },
   run: async (payload) => {
     initializeForTrigger();
+    // Acquire the per-task pool first, then build+run inside try so a failure
+    // anywhere still hits `finally` and resets the pool (no leak).
     const dbManager = await createDBManagerForTrigger();
-    const services = buildContainer(dbManager);
-
     try {
+      const services = buildContainer(dbManager);
       const result = await logger.trace("ingest-by-country", () =>
         services.spotIngestService.ingestByCountry(payload.isoCountryCode),
       );

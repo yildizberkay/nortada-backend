@@ -87,6 +87,33 @@ describe("SpotService", () => {
     });
   });
 
+  describe("search", () => {
+    it("maps matched spots and passes the sport filter through", async () => {
+      mockRepo.searchByName.mockResolvedValue([spotRow()]);
+
+      const result = await service.search({
+        q: "ala",
+        sport: "windsurf",
+        limit: 20,
+      });
+
+      expect(mockRepo.searchByName).toHaveBeenCalledWith("ala", 20, "windsurf");
+      expect(result[0].uid).toBe("spot-1");
+      expect(result[0]).not.toHaveProperty("id");
+    });
+  });
+
+  describe("listByStatus", () => {
+    it("lists spots for a moderation status", async () => {
+      mockRepo.listByStatus.mockResolvedValue([spotRow({ status: "pending" })]);
+
+      const result = await service.listByStatus("pending", 50);
+
+      expect(mockRepo.listByStatus).toHaveBeenCalledWith("pending", 50);
+      expect(result[0].status).toBe("pending");
+    });
+  });
+
   describe("detail", () => {
     it("returns a published spot", async () => {
       mockRepo.findByUid.mockResolvedValue(spotRow());

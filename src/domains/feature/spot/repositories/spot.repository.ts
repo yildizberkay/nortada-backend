@@ -6,6 +6,7 @@ import {
   gte,
   ilike,
   lte,
+  or,
   type SQL,
   sql,
 } from "drizzle-orm";
@@ -13,9 +14,36 @@ import {
 import type { DBManager, NewSpot, Spot } from "@/db";
 import { spotTable } from "@/db/schema";
 import { BaseRepository } from "@/domains/platform/foundation";
-import { boundingBox } from "@/packages/geo";
+import { boundingBox, longitudeRanges } from "@/packages/geo";
 
 const EARTH_RADIUS_KM = 6371;
+
+// Explicit read allowlist (never SELECT *). Spot has no sensitive columns today,
+// but this keeps the repo consistent with the rest of the codebase and stops a
+// future private column from silently surfacing.
+const spotColumns = {
+  id: true,
+  uid: true,
+  name: true,
+  country: true,
+  region: true,
+  locality: true,
+  latitude: true,
+  longitude: true,
+  waterType: true,
+  supportedSports: true,
+  skillSuitability: true,
+  shoreBearingDeg: true,
+  goodWindDirections: true,
+  riskyWindDirections: true,
+  hazards: true,
+  source: true,
+  osmId: true,
+  status: true,
+  createdBy: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 export type SpotWithDistance = Spot & { distanceKm: number };
 
@@ -50,12 +78,18 @@ export class SpotRepository extends BaseRepository {
       )))
     )`;
 
+    // Longitude may wrap the antimeridian → 1-2 OR'd ranges.
+    const lonFilter = or(
+      ...longitudeRanges(bb.lonMin, bb.lonMax).map(([lo, hi]) =>
+        and(gte(spotTable.longitude, lo), lte(spotTable.longitude, hi)),
+      ),
+    );
+
     const filters: (SQL | undefined)[] = [
       eq(spotTable.status, "published"),
       gte(spotTable.latitude, bb.latMin),
       lte(spotTable.latitude, bb.latMax),
-      gte(spotTable.longitude, bb.lonMin),
-      lte(spotTable.longitude, bb.lonMax),
+      lonFilter,
       sql`${distanceKm} <= ${radiusKm}`,
       sport ? arrayContains(spotTable.supportedSports, [sport]) : undefined,
     ];
@@ -75,37 +109,39 @@ export class SpotRepository extends BaseRepository {
     limit: number,
     sport?: Spot["supportedSports"][number],
   ): Promise<Spot[]> {
-    return this.dbClient
-      .select()
-      .from(spotTable)
-      .where(
-        and(
-          eq(spotTable.status, "published"),
-          ilike(spotTable.name, `%${q}%`),
-          sport ? arrayContains(spotTable.supportedSports, [sport]) : undefined,
-        ),
-      )
-      .limit(limit);
+    // Escape LIKE wildcards so a user's `%`/`_`/`\` are literal, not match-all.
+    const escaped = q.replace(/[\\%_]/g, "\\$&");
+    return this.dbClient.query.spot.findMany({
+      columns: spotColumns,
+      where: and(
+        eq(spotTable.status, "published"),
+        ilike(spotTable.name, `%${escaped}%`),
+        sport ? arrayContains(spotTable.supportedSports, [sport]) : undefined,
+      ),
+      limit,
+    });
   }
 
   async findByUid(uid: string): Promise<Spot | undefined> {
     return this.dbClient.query.spot.findFirst({
+      columns: spotColumns,
       where: eq(spotTable.uid, uid),
     });
   }
 
   async findByOsmId(osmId: string): Promise<Spot | undefined> {
     return this.dbClient.query.spot.findFirst({
+      columns: spotColumns,
       where: eq(spotTable.osmId, osmId),
     });
   }
 
   async listByStatus(status: Spot["status"], limit: number): Promise<Spot[]> {
-    return this.dbClient
-      .select()
-      .from(spotTable)
-      .where(eq(spotTable.status, status))
-      .limit(limit);
+    return this.dbClient.query.spot.findMany({
+      columns: spotColumns,
+      where: eq(spotTable.status, status),
+      limit,
+    });
   }
 
   async create(values: NewSpot): Promise<Spot> {
@@ -138,7 +174,13 @@ export class SpotRepository extends BaseRepository {
     const inserted = await this.dbClient
       .insert(spotTable)
       .values(values)
-      .onConflictDoNothing({ target: spotTable.osmId })
+      // osm_id is a PARTIAL unique index (WHERE osm_id IS NOT NULL); the
+      // conflict target must repeat that predicate or Postgres can't use it
+      // as an arbiter (42P10).
+      .onConflictDoNothing({
+        target: spotTable.osmId,
+        where: sql`${spotTable.osmId} IS NOT NULL`,
+      })
       .returning({ id: spotTable.id });
     return inserted.length;
   }

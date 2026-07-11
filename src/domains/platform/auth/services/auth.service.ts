@@ -3,7 +3,7 @@ import { decodeJwt, jwtVerify, SignJWT } from "jose";
 import type { User } from "@/db";
 import { BaseUseCase } from "@/domains/platform/foundation";
 import { GenericError } from "@/packages/error";
-import type { RequestUser } from "@/types";
+import type { MergeReassigner, RequestUser } from "@/types";
 
 import { AuthReason } from "../errors";
 import type { UserRepository } from "../repositories/user.repository";
@@ -30,6 +30,9 @@ export class AuthService extends BaseUseCase {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly clerkService: ClerkService,
+    // One per data-owning domain (spot/favorites, later activity). Run inside
+    // the merge transaction so an account-link never half-moves owned data.
+    private readonly mergeReassigners: MergeReassigner[] = [],
   ) {
     super();
   }
@@ -227,8 +230,9 @@ export class AuthService extends BaseUseCase {
     }
 
     // Branch 2 — Clerk row exists (or was just created by a racing request):
-    // reassign this anonymous row's owned records to it (future domains) and
-    // retire the anonymous row. Re-read to cover the race path.
+    // atomically reassign this anonymous row's owned data (favorites, later
+    // activities) to the target, then retire the anonymous row (D-008). One
+    // transaction so a partial failure never orphans or half-moves data.
     const target =
       existingClerkUser ??
       (await this.userRepository.findByClerkUserId(identity.clerkUserId));
@@ -237,7 +241,12 @@ export class AuthService extends BaseUseCase {
         message: "Link target user could not be resolved",
       });
     }
-    await this.userRepository.markMergedInto(anonUser.id, target.id);
+    await this.userRepository.transaction(async (tx) => {
+      for (const reassign of this.mergeReassigners) {
+        await reassign(anonUser.id, target.id, tx);
+      }
+      await this.userRepository.markMergedInto(anonUser.id, target.id, tx);
+    });
     return target;
   }
 }

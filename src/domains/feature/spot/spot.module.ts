@@ -1,5 +1,6 @@
 import type { ModuleDeps } from "@/container";
 import { OverpassClient } from "@/packages/overpass";
+import type { MergeReassigner } from "@/types";
 
 import { FavoriteRepository } from "./repositories/favorite.repository";
 import { SpotRepository } from "./repositories/spot.repository";
@@ -21,5 +22,15 @@ export function createSpotModule({ db }: ModuleDeps) {
     overpassClient,
     spotRepository,
   );
-  return { spotService, favoriteService, spotIngestService };
+
+  // Merge hook (D-008): favorites move to the target account on link.
+  const favoriteReassigner: MergeReassigner = (from, to, tx) =>
+    favoriteRepository.reassignOwner(from, to, tx);
+
+  return {
+    spotService,
+    favoriteService,
+    spotIngestService,
+    favoriteReassigner,
+  };
 }

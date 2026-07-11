@@ -313,6 +313,9 @@ export const spotTable = pgTable(
     updatedAt: updatedAtColumn(),
   },
   (t) => [
+    // btree range-scans only the leading column (latitude); longitude is an
+    // in-index filter. Fine at ~30k rows (D-003); revisit with cube/earthdistance
+    // GiST if the dataset grows.
     index("spot_lat_lon_idx").on(t.latitude, t.longitude),
     index("spot_status_idx").on(t.status),
     uniqueIndex("spot_osm_id_key")

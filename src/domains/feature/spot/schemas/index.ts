@@ -66,6 +66,9 @@ export const ingestResponseSchema = z
 export const moderateSpotSchema = z.object({
   status: z.enum(spotStatusEnum.enumValues).optional(),
   name: z.string().min(2).max(200).optional(),
+  country: z.string().max(100).nullable().optional(),
+  region: z.string().max(100).nullable().optional(),
+  locality: z.string().max(100).nullable().optional(),
   waterType: z.enum(waterTypeEnum.enumValues).nullable().optional(),
   skillSuitability: z.enum(spotSkillEnum.enumValues).nullable().optional(),
   supportedSports: z.array(sport).min(1).optional(),

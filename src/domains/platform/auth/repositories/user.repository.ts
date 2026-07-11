@@ -1,6 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 
 import type { DBManager, NewUser, User } from "@/db";
+import type { DBExecutor } from "@/db/db.manager";
 import { userTable } from "@/db/schema";
 import { BaseRepository } from "@/domains/platform/foundation";
 
@@ -149,10 +150,18 @@ export class UserRepository extends BaseRepository {
   async markMergedInto(
     anonymousUserId: number,
     targetUserId: number,
+    tx: DBExecutor = this.dbClient,
   ): Promise<void> {
-    await this.dbClient
+    await tx
       .update(userTable)
       .set({ mergedIntoUserId: targetUserId, anonymousDeviceId: null })
       .where(eq(userTable.id, anonymousUserId));
+  }
+
+  /** Run a set of writes in a single transaction — the merge orchestration
+   * (reassign owned data + retire the anonymous row) uses this so the whole
+   * account-link is atomic (D-008). */
+  async transaction<T>(fn: (tx: DBExecutor) => Promise<T>): Promise<T> {
+    return this.dbClient.transaction(fn);
   }
 }

@@ -1,4 +1,5 @@
 import { drizzle } from "drizzle-orm/node-postgres";
+import type { PgDatabase } from "drizzle-orm/pg-core";
 import { Pool } from "pg";
 
 import { globalConfig } from "@/app/global-config";
@@ -24,6 +25,14 @@ const createDrizzleClient = (pool: Pool) => {
 };
 
 export type DBClient = ReturnType<typeof createDrizzleClient>;
+
+/**
+ * Something you can run queries on — the full client OR a transaction handle.
+ * Both extend `PgDatabase`, so a repo method can accept either and participate
+ * in a caller-opened transaction (used by the D-008 merge reassign). The
+ * generic params are irrelevant to the merge writes, hence `any`.
+ */
+export type DBExecutor = PgDatabase<any, any, any>;
 
 export interface DBManager {
   client: DBClient;
