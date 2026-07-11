@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -q 'git push' && { npm run lint:biome 2>&1 && npx tsc --noEmit --project tsconfig.check.json 2>&1 || { echo '{\"decision\":\"block\",\"reason\":\"Lint or type check failed. Fix errors before pushing.\"}'; exit 0; }; } || true",
+            "timeout": 120,
+            "statusMessage": "Running lint & type check before push..."
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -q 'gh pr create' && { echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"IMPORTANT: Before creating this PR, you MUST run the convention-reviewer agent and principal-architect-reviewer agent on all uncommitted changes. If either finds issues, fix them before creating the PR. Do NOT proceed with gh pr create until both reviews pass.\"}}'; } || true",
+            "timeout": 5,
+            "statusMessage": "Checking if PR review is needed..."
+          }
+        ]
+      }
+    ]
+  }
+}

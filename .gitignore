@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# Claude Code (machine-specific)
+.claude/settings.local.json
+.claude/agent-memory/
+.claude/scheduled_tasks.lock
+
+# Test / coverage
+coverage/
+
+# Trigger.dev
+.trigger/
