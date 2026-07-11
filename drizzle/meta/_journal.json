@@ -15,6 +15,13 @@
       "when": 1783785271743,
       "tag": "0001_broad_the_hood",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783787359958,
+      "tag": "0002_puzzling_colonel_america",
+      "breakpoints": true
     }
   ]
 }

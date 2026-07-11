@@ -44,6 +44,7 @@ export class AuthService extends BaseUseCase {
       uid: user.uid,
       isAnonymous: user.isAnonymous,
       clerkUserId: user.clerkUserId,
+      isAdmin: user.isAdmin,
     };
   }
 

@@ -9,6 +9,14 @@
 >
 > Statü kodları: ✅ karar verildi & uygulandı · ❓ senin onayını bekliyor ·
 > ⏸️ bilinçli ertelendi.
+>
+> **⚠️ Bilinen kısıt (tüm oturum):** Docker çalışıyor ama **image registry
+> erişilemez/engelli** (`hello-world` bile 10sn'de timeout) → `postgres:17-alpine`
+> çekilemedi, bu yüzden hiçbir RFC'de **canlı DB testi** yapamadım. Doğrulama:
+> birim testleri (jest), migration SQL incelemesi, DB'siz server-boot smoke
+> (RFC-0001'de `/health`+`/openapi.json`+404+hata-zinciri doğrulandı). Sen
+> gelince: `docker compose up -d db` → `npm run db:migrate` → manuel/entegrasyon
+> testleri. (Registry açılırsa ben de opportunist deneyeceğim.)
 
 ---
 

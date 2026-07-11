@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -121,6 +122,56 @@ export const activityPeriodEnum = pgEnum("activity_period", [
   "custom",
 ]);
 
+// ─── spot enums (RFC-0004) ───────────────────────────────────────────────────
+export const waterTypeEnum = pgEnum("water_type", [
+  "sea",
+  "lake",
+  "bay",
+  "river",
+  "marina",
+  "open_coast",
+]);
+
+export const spotSkillEnum = pgEnum("spot_skill", [
+  "beginner",
+  "intermediate",
+  "advanced",
+  "all",
+]);
+
+// 16-point compass — good/risky wind directions are stored as these; the live
+// side/on/off-shore verdict is derived from `shoreBearingDeg` at query time.
+export const compassDirectionEnum = pgEnum("compass_direction", [
+  "N",
+  "NNE",
+  "NE",
+  "ENE",
+  "E",
+  "ESE",
+  "SE",
+  "SSE",
+  "S",
+  "SSW",
+  "SW",
+  "WSW",
+  "W",
+  "WNW",
+  "NW",
+  "NNW",
+]);
+
+export const spotSourceEnum = pgEnum("spot_source", [
+  "osm",
+  "curated",
+  "user_suggested",
+]);
+
+export const spotStatusEnum = pgEnum("spot_status", [
+  "published",
+  "pending",
+  "rejected",
+]);
+
 // ─── auth (RFC-0002) ─────────────────────────────────────────────────────────
 // One row per identity. Anonymous devices and real Clerk logins live in the
 // same table so `c.var.user` is uniform. On login the anonymous row is either
@@ -139,6 +190,9 @@ export const userTable = pgTable(
     anonymousDeviceId: text("anonymous_device_id"),
     email: text("email"),
     displayName: text("display_name"),
+    // Admin/moderator flag — gates spot moderation (RFC-0004) and future admin
+    // surfaces. Set out-of-band (never via the API).
+    isAdmin: boolean("is_admin").notNull().default(false),
     // Set when THIS anonymous row was merged into another (Clerk) user on login.
     // A non-null value means the row is retired — its tokens must be rejected.
     mergedIntoUserId: integer("merged_into_user_id").references(
@@ -224,6 +278,74 @@ export const userSportProfileTable = pgTable(
 export type UserSportProfile = typeof userSportProfileTable.$inferSelect;
 export type NewUserSportProfile = typeof userSportProfileTable.$inferInsert;
 
+// ─── spot (RFC-0004) ─────────────────────────────────────────────────────────
+// Watersports spots. Geo nearby uses a `(latitude, longitude)` bbox pre-filter
+// + haversine ordering — plain Postgres, no PostGIS (D-003). Coordinates are
+// doublePrecision (float4 loses longitude precision). `shoreBearingDeg` is the
+// core IP: wind direction → side/on/off-shore is derived from it at query time.
+export const spotTable = pgTable(
+  "spot",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    name: text("name").notNull(),
+    country: text("country"),
+    region: text("region"),
+    locality: text("locality"),
+    latitude: doublePrecision("latitude").notNull(),
+    longitude: doublePrecision("longitude").notNull(),
+    waterType: waterTypeEnum("water_type"),
+    supportedSports: sportEnum("supported_sports").array().notNull(),
+    skillSuitability: spotSkillEnum("skill_suitability"),
+    // 0–360°, coastline-facing normal. Null until derived/curated.
+    shoreBearingDeg: real("shore_bearing_deg"),
+    goodWindDirections: compassDirectionEnum("good_wind_directions").array(),
+    riskyWindDirections: compassDirectionEnum("risky_wind_directions").array(),
+    // Free-tagged hazards ("offshore_wind", "shallows", "rocks"…) — open set,
+    // so text[] rather than an enum.
+    hazards: text("hazards").array(),
+    source: spotSourceEnum("source").notNull(),
+    // OpenStreetMap element id when sourced from OSM — dedupe + update key.
+    osmId: text("osm_id"),
+    status: spotStatusEnum("status").notNull().default("pending"),
+    createdBy: integer("created_by").references(() => userTable.id),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    index("spot_lat_lon_idx").on(t.latitude, t.longitude),
+    index("spot_status_idx").on(t.status),
+    uniqueIndex("spot_osm_id_key")
+      .on(t.osmId)
+      .where(sql`${t.osmId} IS NOT NULL`),
+  ],
+);
+
+export type Spot = typeof spotTable.$inferSelect;
+export type NewSpot = typeof spotTable.$inferInsert;
+
+// A user's favorited spots. Lives with the spot feature (not platform/user) so
+// the FK to `spot` doesn't force a platform→feature import. Feeds the weather
+// hot-set (D-004).
+export const favoriteTable = pgTable(
+  "favorite",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => userTable.id),
+    spotId: integer("spot_id")
+      .notNull()
+      .references(() => spotTable.id),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [uniqueIndex("favorite_user_spot_key").on(t.userId, t.spotId)],
+);
+
+export type Favorite = typeof favoriteTable.$inferSelect;
+export type NewFavorite = typeof favoriteTable.$inferInsert;
+
 // ─── Schema registry ────────────────────────────────────────────────────────
 // Every domain appends its tables / enums / relations here. Drizzle's
 // `db.query.*` API is generated from this object.
@@ -231,4 +353,6 @@ export const dbSchema = {
   user: userTable,
   userProfile: userProfileTable,
   userSportProfile: userSportProfileTable,
+  spot: spotTable,
+  favorite: favoriteTable,
 };

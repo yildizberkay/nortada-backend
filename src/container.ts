@@ -1,4 +1,5 @@
 import { type DBManager, getDBManager } from "@/db/db.manager";
+import { createSpotModule } from "@/domains/feature/spot/spot.module";
 import { createAuthModule } from "@/domains/platform/auth/auth.module";
 import { createUserModule } from "@/domains/platform/user/user.module";
 
@@ -32,10 +33,12 @@ export function buildContainer(db: DBManager) {
 
   const auth = createAuthModule(deps);
   const user = createUserModule(deps);
+  const spot = createSpotModule(deps);
 
   return {
     ...auth,
     ...user,
+    ...spot,
   };
 }
 

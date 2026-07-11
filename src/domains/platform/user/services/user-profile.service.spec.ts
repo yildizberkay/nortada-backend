@@ -9,6 +9,7 @@ const user: RequestUser = {
   uid: "u1",
   isAnonymous: true,
   clerkUserId: null,
+  isAdmin: false,
 };
 
 const profileRow = (overrides: Partial<UserProfile> = {}): UserProfile =>

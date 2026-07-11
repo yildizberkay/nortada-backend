@@ -9,6 +9,7 @@ export interface RequestUser {
   uid: string;
   isAnonymous: boolean;
   clerkUserId: string | null;
+  isAdmin: boolean;
 }
 
 export type Variables<IsUserOptional extends boolean> =

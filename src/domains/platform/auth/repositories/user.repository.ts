@@ -16,6 +16,7 @@ const userColumns = {
   anonymousDeviceId: true,
   email: true,
   displayName: true,
+  isAdmin: true,
   mergedIntoUserId: true,
   createdAt: true,
   updatedAt: true,

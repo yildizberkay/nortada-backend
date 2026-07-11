@@ -37,6 +37,7 @@ const anonUser = (overrides: Partial<User> = {}): User =>
     anonymousDeviceId: "device-123",
     email: null,
     displayName: null,
+    isAdmin: false,
     mergedIntoUserId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -52,6 +53,7 @@ const clerkUser = (overrides: Partial<User> = {}): User =>
     anonymousDeviceId: null,
     email: "a@b.com",
     displayName: "A B",
+    isAdmin: false,
     mergedIntoUserId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -128,6 +130,7 @@ describe("AuthService", () => {
         uid: "user-anon-uid",
         isAnonymous: true,
         clerkUserId: null,
+        isAdmin: false,
       });
     });
 
@@ -193,6 +196,7 @@ describe("AuthService", () => {
       uid: "user-anon-uid",
       isAnonymous: true,
       clerkUserId: null,
+      isAdmin: false,
     };
 
     it("rejects a non-anonymous principal", async () => {
@@ -290,6 +294,7 @@ describe("AuthService", () => {
         uid: "user-clerk-uid",
         isAnonymous: false,
         clerkUserId: "clerk_abc",
+        isAdmin: false,
       });
 
       expect(result).toBe(user);
@@ -304,6 +309,7 @@ describe("AuthService", () => {
           uid: "ghost",
           isAnonymous: true,
           clerkUserId: null,
+          isAdmin: false,
         }),
       ).rejects.toThrow(GenericError);
     });
