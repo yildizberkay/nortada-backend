@@ -362,4 +362,66 @@ Cross-domain transaction, `DBExecutor` (`PgDatabase<any,any,any>`) tipiyle threa
 
 ---
 
+---
+
+# RFC-0005 (Hava) kararları
+
+## 24. Karar motoru eşikleri = benim mantıklı varsayılanlarım ❓ (senin ayarın gerekli)
+
+**Karar:** `decision.ts`'te spor başına rüzgâr bantları (m/s) benim belirlediğim
+makul değerler (PRD §12.6 matrisi diskte yoktu). Örn. windsurf go=7-14 m/s,
+SUP tersine (0-4 m/s go, çok rüzgâr skip).
+
+**Neden:** Karar motorunu çalışır kılmak için bir eşik tablosu gerekliydi.
+Değerler `THRESHOLDS` sabitinde tek yerde, ayarlaması kolay.
+
+**Onayın gerekli:** Gelince gerçek eşikleri (spor+seviye) ver, `THRESHOLDS`'u
+güncelleyelim. Skill-level ayarı da (beginner daha dar bant) eklenecek.
+
+## 25. Güvenlik downgrade'leri: CAPE + offshore ölçekli ✅ (review-driven)
+
+**Karar:** (a) **CAPE** (fırtına-öncesi enerji) motora bağlandı: >1000 J/kg →
+watch, >2500 → skip — weather_code 95'e ulaşmadan (yani şimşek başlamadan) uyarır.
+(b) **Offshore** downgrade güçlendirildi: pure-offshore + güçlü rüzgâr → **skip**
+(denize sürüklenme, hayati risk), zayıf offshore → watch, cross-offshore → watch.
+
+**Neden (principal-review MEDIUM, güvenlik):** Eski hâlde motor şimşek çakana
+kadar "go" diyordu (CAPE fetch'leniyor ama kullanılmıyordu); offshore ise sadece
+dar bantta tek-kademe idi. İkisi de can güvenliği.
+
+## 26. Freshness: model pinlendi + stale updateInterval'dan ✅ (review-driven)
+
+**Karar:** Forecast `models=icon_seamless`'e pinlendi ki servis ettiğimiz payload
+ile okuduğumuz model-metadata **aynı modeli** anlatsın (yoksa best_match her
+konumda farklı çözülüp "updated Xm ago / model run" hikâyesini tutarsız kılıyordu).
+`stale` artık cache-TTL'e ek olarak `updateIntervalSec`'ten de hesaplanıyor
+(now - fetchedAt > updateInterval → stale, mapping doc §3).
+
+**Onayın gerekebilir:** icon_seamless global+EU dikişli, Ege için iyi; bölgesel
+model (ICON-EU/AROME) ince ayarı ileride yapılabilir.
+
+## 27. Weather diğer kararlar + fast-follow'lar (review-driven)
+
+**Verilen kararlar:** TTL forecast 1s / marine 3s; sıcak set = **sadece
+favoriler** (alarmlar RFC-0008, recently-viewed → P1); refresh cron */30dk;
+weather→spot bağımlılığı **port** (`WeatherSpotPort`, ISP/DIP — RFC-0006 de bu
+deseni izleyecek); task'lara `retry:{maxAttempts:3}` eklendi.
+
+**Fast-follow olarak kaydedilenler (şimdilik yapılmadı, gelince):**
+- **Thundering-herd:** popüler spot cache expire olunca N eşzamanlı istek N fetch
+  yapıyor → in-process single-flight (spotUid,kind) eklenecek.
+- **Refresh cadence-aware:** cron her 30dk TÜM favorileri yeniden çekiyor →
+  cache taze olanı atla, `updateIntervalSec` kadansına uy, bounded-concurrency.
+- **Primary sport:** verdict `?sport=` yoksa spot'un ilk sporuna düşüyor;
+  client kullanıcının primary sport'unu `?sport=` ile geçiyor (app profili biliyor).
+  Sunucu-tarafı user_profile default'u fast-follow (weather→user plumbing).
+- **Daily strip UTC:** 10-günlük şerit UTC-gününe göre gruplanıyor (cache paylaşımı
+  için timezone=UTC, D-006); yerel-gün hizası için client agregasyonu ya da
+  timezone=auto ileride.
+- **wind-field endpoint** (RFC §5) → P1 (rüzgâr vektör ızgarası; çizim client).
+- Marine stale-fallback, visibility/uv_index fetch, tide/wave/apparent-temp
+  response'ta yüzeye çıkarma, Open-Meteo yanıtını Zod ile doğrulama.
+
+---
+
 *(Sonraki RFC'lerde verilen kararlar bu dosyaya eklenmeye devam edecek.)*

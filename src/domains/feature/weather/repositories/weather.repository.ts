@@ -12,16 +12,41 @@ import { BaseRepository } from "@/domains/platform/foundation";
 
 type WeatherKind = WeatherCache["kind"];
 
+const weatherCacheColumns = {
+  id: true,
+  uid: true,
+  spotUid: true,
+  kind: true,
+  fetchedAt: true,
+  modelRun: true,
+  payload: true,
+  expiresAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const weatherModelMetaColumns = {
+  id: true,
+  uid: true,
+  model: true,
+  lastRunAvailabilityTime: true,
+  updateIntervalSec: true,
+  fetchedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 export class WeatherRepository extends BaseRepository {
   constructor(externalDBManager?: DBManager) {
     super(externalDBManager);
   }
 
-  async getCache(
+  async findCache(
     spotUid: string,
     kind: WeatherKind,
   ): Promise<WeatherCache | undefined> {
     return this.dbClient.query.weatherCache.findFirst({
+      columns: weatherCacheColumns,
       where: and(
         eq(weatherCacheTable.spotUid, spotUid),
         eq(weatherCacheTable.kind, kind),
@@ -40,8 +65,9 @@ export class WeatherRepository extends BaseRepository {
       });
   }
 
-  async getModelMeta(model: string): Promise<WeatherModelMeta | undefined> {
+  async findModelMeta(model: string): Promise<WeatherModelMeta | undefined> {
     return this.dbClient.query.weatherModelMeta.findFirst({
+      columns: weatherModelMetaColumns,
       where: eq(weatherModelMetaTable.model, model),
     });
   }

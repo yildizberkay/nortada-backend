@@ -91,6 +91,41 @@ describe("computeDecision", () => {
       }),
     ).toBe("watch");
   });
+
+  it("strong offshore wind downgrades all the way to skip", () => {
+    // 16 m/s > windsurf idealMax (14) + offshore → skip (can't get back).
+    expect(
+      computeDecision({
+        sport: "windsurf",
+        windMs: 16,
+        gustMs: 18,
+        weatherCode: 0,
+        windDirectionDeg: 90,
+        shoreBearingDeg: 270,
+      }),
+    ).toBe("skip");
+  });
+
+  it("pre-storm CAPE downgrades before the storm code appears", () => {
+    expect(
+      computeDecision({
+        sport: "windsurf",
+        windMs: 10,
+        gustMs: 12,
+        weatherCode: 0,
+        capeJkg: 1500,
+      }),
+    ).toBe("watch");
+    expect(
+      computeDecision({
+        sport: "windsurf",
+        windMs: 10,
+        gustMs: 12,
+        weatherCode: 0,
+        capeJkg: 3000,
+      }),
+    ).toBe("skip");
+  });
 });
 
 describe("computeConfidence", () => {
@@ -132,14 +167,15 @@ describe("bestWindow", () => {
     windGustsMs: winds.map((w) => w + 1),
     windDirectionDeg: winds.map(() => 270),
     weatherCode: winds.map(() => 0),
+    capeJkg: winds.map(() => 0),
   });
 
-  it("finds the soonest contiguous go-run", () => {
-    // hours: light, GO, GO, light...
+  it("finds the soonest contiguous go-run (exclusive end boundary)", () => {
+    // hours: light, GO, GO, light... → covers 01:00 and 02:00, ends at 03:00.
     const w = bestWindow(series([3, 10, 11, 3, 3]), "windsurf", null);
     expect(w).not.toBeNull();
     expect(w?.start).toBe("2026-07-11T01:00");
-    expect(w?.end).toBe("2026-07-11T02:00");
+    expect(w?.end).toBe("2026-07-11T03:00");
     expect(w?.peakWindMs).toBe(11);
   });
 

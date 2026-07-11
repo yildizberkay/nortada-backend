@@ -74,6 +74,12 @@ const FORECAST_CURRENT = [
   "temperature_2m",
 ].join(",");
 
+// Pin the model so the served payload matches the model-metadata we read for
+// the freshness/stale signal (a bare best_match would resolve per-location and
+// make the "updated Xm ago / model run" story inconsistent). `icon_seamless` is
+// ICON global+EU stitched — solid for the Aegean beachhead. See otonom-kararlar.
+export const FORECAST_MODEL = "icon_seamless";
+
 const MARINE_HOURLY = [
   "wave_height",
   "wave_period",
@@ -120,6 +126,7 @@ export class OpenMeteoClient {
       longitude: String(lon),
       hourly: FORECAST_HOURLY,
       current: FORECAST_CURRENT,
+      models: FORECAST_MODEL,
       wind_speed_unit: "ms",
       temperature_unit: "celsius",
       precipitation_unit: "mm",

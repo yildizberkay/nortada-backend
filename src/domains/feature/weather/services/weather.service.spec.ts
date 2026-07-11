@@ -1,5 +1,4 @@
 import type { WeatherCache } from "@/db";
-import type { SpotService } from "@/domains/feature/spot/services/spot.service";
 import type { SpotGeo } from "@/domains/feature/spot/types";
 import type {
   ForecastPayload,
@@ -8,7 +7,7 @@ import type {
 } from "@/packages/open-meteo";
 
 import type { WeatherRepository } from "../repositories/weather.repository";
-import { WeatherService } from "./weather.service";
+import { WeatherService, type WeatherSpotPort } from "./weather.service";
 
 const geo: SpotGeo = {
   uid: "spot-1",
@@ -56,7 +55,7 @@ const marinePayload = (): MarinePayload => ({
 const mockSpotService = {
   getGeoByUid: jest.fn(),
   listHotSpotGeos: jest.fn(),
-} as unknown as jest.Mocked<SpotService>;
+} as unknown as jest.Mocked<WeatherSpotPort>;
 
 const mockClient = {
   fetchForecast: jest.fn(),
@@ -65,9 +64,9 @@ const mockClient = {
 } as unknown as jest.Mocked<OpenMeteoClient>;
 
 const mockRepo = {
-  getCache: jest.fn(),
+  findCache: jest.fn(),
   upsertCache: jest.fn(),
-  getModelMeta: jest.fn(),
+  findModelMeta: jest.fn(),
   upsertModelMeta: jest.fn(),
 } as unknown as jest.Mocked<WeatherRepository>;
 
@@ -84,7 +83,7 @@ describe("WeatherService", () => {
 
   describe("getConditions", () => {
     it("fetches on cache miss and computes the verdict", async () => {
-      mockRepo.getCache.mockResolvedValue(undefined as never);
+      mockRepo.findCache.mockResolvedValue(undefined as never);
 
       const result = await service.getConditions("spot-1", {});
 
@@ -109,7 +108,7 @@ describe("WeatherService", () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      mockRepo.getCache.mockImplementation(async (_uid, kind) =>
+      mockRepo.findCache.mockImplementation(async (_uid, kind) =>
         kind === "forecast" ? fresh : (undefined as never),
       );
 
@@ -137,7 +136,7 @@ describe("WeatherService", () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      mockRepo.getCache.mockImplementation(async (_uid, kind) =>
+      mockRepo.findCache.mockImplementation(async (_uid, kind) =>
         kind === "forecast" ? expired : (undefined as never),
       );
       mockClient.fetchForecast.mockRejectedValue(new Error("open-meteo down"));
@@ -155,7 +154,7 @@ describe("WeatherService", () => {
         geo,
         { ...geo, uid: "spot-2" },
       ]);
-      mockRepo.getCache.mockResolvedValue(undefined as never);
+      mockRepo.findCache.mockResolvedValue(undefined as never);
       mockClient.fetchForecast
         .mockResolvedValueOnce(forecastPayload(10))
         .mockRejectedValueOnce(new Error("fail"));

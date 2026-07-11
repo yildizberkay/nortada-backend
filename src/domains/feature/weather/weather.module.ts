@@ -1,22 +1,25 @@
 import type { ModuleDeps } from "@/container";
-import type { SpotService } from "@/domains/feature/spot/services/spot.service";
 import { OpenMeteoClient } from "@/packages/open-meteo";
 
 import { WeatherRepository } from "./repositories/weather.repository";
-import { WeatherService } from "./services/weather.service";
+import {
+  WeatherService,
+  type WeatherSpotPort,
+} from "./services/weather.service";
 
 export interface WeatherModuleDeps extends ModuleDeps {
-  // Cross-domain: weather resolves spot geo + the favorites hot set.
-  spotService: SpotService;
+  // The spot slice weather needs (SpotService satisfies it) — passed explicitly
+  // at the composition root.
+  spotPort: WeatherSpotPort;
 }
 
-export function createWeatherModule({ db, spotService }: WeatherModuleDeps) {
+export function createWeatherModule({ db, spotPort }: WeatherModuleDeps) {
   const weatherRepository = new WeatherRepository(db);
   const openMeteoClient = new OpenMeteoClient();
   const weatherService = new WeatherService(
     weatherRepository,
     openMeteoClient,
-    spotService,
+    spotPort,
   );
   return { weatherService };
 }

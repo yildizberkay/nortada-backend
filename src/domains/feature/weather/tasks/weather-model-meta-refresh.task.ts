@@ -14,6 +14,7 @@ export const weatherModelMetaRefreshTask = schedules.task({
   id: "weather-model-meta-refresh",
   cron: "0 * * * *",
   maxDuration: 120,
+  retry: { maxAttempts: 3 },
   queue: { concurrencyLimit: 1 },
   run: async () => {
     initializeForTrigger();

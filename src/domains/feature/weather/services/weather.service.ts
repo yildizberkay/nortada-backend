@@ -1,14 +1,14 @@
 import type { JsonValue } from "@/db";
-import type { SpotService } from "@/domains/feature/spot/services/spot.service";
 import type { SpotGeo } from "@/domains/feature/spot/types";
 import { BaseUseCase } from "@/domains/platform/foundation";
 import { GenericError } from "@/packages/error";
 import { windSide } from "@/packages/geo";
 import { createLogger } from "@/packages/logger";
-import type {
-  ForecastPayload,
-  MarinePayload,
-  OpenMeteoClient,
+import {
+  FORECAST_MODEL,
+  type ForecastPayload,
+  type MarinePayload,
+  type OpenMeteoClient,
 } from "@/packages/open-meteo";
 
 import {
@@ -25,7 +25,6 @@ type Sport = SpotGeo["supportedSports"][number];
 
 const FORECAST_TTL_MS = 60 * 60 * 1000; // 1h — the "now" tick wants freshness
 const MARINE_TTL_MS = 3 * 60 * 60 * 1000; // 3h — waves move slower
-const DEFAULT_MODEL = "icon_seamless";
 
 const log = createLogger("WeatherService");
 
@@ -36,17 +35,27 @@ interface Fetched<T> {
   stale: boolean;
 }
 
+/**
+ * The minimal slice of the spot domain weather depends on (SOLID ISP/DIP). The
+ * spot module's `SpotService` satisfies it; weather never sees the rest of its
+ * surface. RFC-0006 (activity→weather) should follow the same port pattern.
+ */
+export interface WeatherSpotPort {
+  getGeoByUid(uid: string): Promise<SpotGeo>;
+  listHotSpotGeos(): Promise<SpotGeo[]>;
+}
+
 export class WeatherService extends BaseUseCase {
   constructor(
     private readonly weatherRepository: WeatherRepository,
     private readonly openMeteoClient: OpenMeteoClient,
-    private readonly spotService: SpotService,
+    private readonly spotPort: WeatherSpotPort,
   ) {
     super();
   }
 
   async getConditions(spotUid: string, query: WeatherQuery) {
-    const spot = await this.spotService.getGeoByUid(spotUid);
+    const spot = await this.spotPort.getGeoByUid(spotUid);
     const sport = this.resolveSport(spot, query.sport);
 
     const fc = await this.getOrFetchForecast(spot);
@@ -64,6 +73,8 @@ export class WeatherService extends BaseUseCase {
       windMs: current.windSpeedMs,
       gustMs: current.windGustsMs,
       weatherCode: current.weatherCode,
+      // `current` block has no CAPE — use the nearest hour.
+      capeJkg: forecast.hourly.capeJkg[0],
       windDirectionDeg: current.windDirectionDeg,
       shoreBearingDeg: spot.shoreBearingDeg,
     });
@@ -91,12 +102,12 @@ export class WeatherService extends BaseUseCase {
               marine.payload.hourly.seaSurfaceTemperatureC[0] ?? null,
           }
         : null,
-      freshness: this.freshness(fc),
+      freshness: this.freshness(fc, await this.modelMeta()),
     };
   }
 
   async getForecast(spotUid: string, query: WeatherQuery) {
-    const spot = await this.spotService.getGeoByUid(spotUid);
+    const spot = await this.spotPort.getGeoByUid(spotUid);
     const sport = this.resolveSport(spot, query.sport);
     const fc = await this.getOrFetchForecast(spot);
     const h = fc.payload.hourly;
@@ -113,6 +124,7 @@ export class WeatherService extends BaseUseCase {
         windMs: h.windSpeedMs[i] ?? 0,
         gustMs: h.windGustsMs[i] ?? 0,
         weatherCode: h.weatherCode[i] ?? 0,
+        capeJkg: h.capeJkg[i],
         windDirectionDeg: h.windDirectionDeg[i],
         shoreBearingDeg: spot.shoreBearingDeg,
       }),
@@ -123,14 +135,14 @@ export class WeatherService extends BaseUseCase {
       sport,
       hourly,
       daily: this.deriveDaily(fc.payload, sport, spot.shoreBearingDeg),
-      freshness: this.freshness(fc),
+      freshness: this.freshness(fc, await this.modelMeta()),
     };
   }
 
   /** Re-fetch the whole hot set (favorites). Called by the weather-refresh cron
    * (D-004) — one spot's failure never aborts the batch. */
   async refreshHotSet(): Promise<{ hotSpots: number; refreshed: number }> {
-    const spots = await this.spotService.listHotSpotGeos();
+    const spots = await this.spotPort.listHotSpotGeos();
     let refreshed = 0;
     for (const spot of spots) {
       try {
@@ -148,9 +160,9 @@ export class WeatherService extends BaseUseCase {
   }
 
   async refreshModelMeta(): Promise<void> {
-    const meta = await this.openMeteoClient.fetchModelMeta(DEFAULT_MODEL);
+    const meta = await this.openMeteoClient.fetchModelMeta(FORECAST_MODEL);
     await this.weatherRepository.upsertModelMeta({
-      model: DEFAULT_MODEL,
+      model: FORECAST_MODEL,
       lastRunAvailabilityTime: meta.lastRunAvailabilityTime,
       updateIntervalSec: meta.updateIntervalSec,
       fetchedAt: new Date(),
@@ -172,18 +184,40 @@ export class WeatherService extends BaseUseCase {
     return spot.supportedSports[0] ?? "other";
   }
 
-  private freshness(fc: Fetched<unknown>) {
+  /** The pinned model's run time + update cadence (for the "updated Xm ago /
+   * stale" story). The forecast is pinned to FORECAST_MODEL so this metadata
+   * describes the same model that produced the served payload. */
+  private async modelMeta(): Promise<{
+    lastRun: Date | null;
+    updateIntervalSec: number | null;
+  }> {
+    const meta = await this.weatherRepository.findModelMeta(FORECAST_MODEL);
+    return {
+      lastRun: meta?.lastRunAvailabilityTime ?? null,
+      updateIntervalSec: meta?.updateIntervalSec ?? null,
+    };
+  }
+
+  private freshness(
+    fc: Fetched<unknown>,
+    meta: { lastRun: Date | null; updateIntervalSec: number | null },
+  ) {
+    // Stale when the provider fetch failed (fc.stale), OR our copy has aged past
+    // the model's update interval (mapping doc §3).
+    const agedOut =
+      meta.updateIntervalSec != null &&
+      Date.now() - fc.fetchedAt.getTime() > meta.updateIntervalSec * 1000;
     return {
       fetchedAt: fc.fetchedAt.toISOString(),
-      modelRun: fc.modelRun ? fc.modelRun.toISOString() : null,
-      stale: fc.stale,
+      modelRun: meta.lastRun ? meta.lastRun.toISOString() : null,
+      stale: fc.stale || agedOut,
     };
   }
 
   private async getOrFetchForecast(
     spot: SpotGeo,
   ): Promise<Fetched<ForecastPayload>> {
-    const cached = await this.weatherRepository.getCache(spot.uid, "forecast");
+    const cached = await this.weatherRepository.findCache(spot.uid, "forecast");
     const now = new Date();
     if (cached && cached.expiresAt > now) {
       return {
@@ -234,7 +268,7 @@ export class WeatherService extends BaseUseCase {
   private async getOrFetchMarine(
     spot: SpotGeo,
   ): Promise<Fetched<MarinePayload>> {
-    const cached = await this.weatherRepository.getCache(spot.uid, "marine");
+    const cached = await this.weatherRepository.findCache(spot.uid, "marine");
     const now = new Date();
     if (cached && cached.expiresAt > now) {
       return {
@@ -287,6 +321,7 @@ export class WeatherService extends BaseUseCase {
           windMs: h.windSpeedMs[i] ?? 0,
           gustMs: h.windGustsMs[i] ?? 0,
           weatherCode: h.weatherCode[i] ?? 0,
+          capeJkg: h.capeJkg[i],
           windDirectionDeg: h.windDirectionDeg[i],
           shoreBearingDeg,
         }),

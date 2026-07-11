@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | 0005 |
 | **Başlık** | Hava (Open-Meteo, decision/best-window, talep-güdümlü cache) |
-| **Status** | 🚧 In Progress |
+| **Status** | ✅ Completed (wind-field + live-obs P1) |
 | **Step** | 4 |
 | **Depends on** | RFC-0004 (spot), RFC-0003 (favoriler → sıcak set) |
 | **Domain(ler)** | feature/weather |
@@ -26,10 +26,10 @@ App şu an mock tahmin kullanıyor. Tek sağlayıcı Open-Meteo (D-003/D-004; is
 - Best-window/decision **türetilir** (saklanmayabilir; ucuz) ya da `payload` içinde cache'lenir.
 
 ## 5. API yüzeyi
-- `GET /v1/spots/:uid/conditions` — "now" + bugün özeti + verdict + best-window (RFC-0004 detay ile birleşir).
-- `GET /v1/spots/:uid/forecast` — saatlik + 10 günlük şerit + yön bantları.
-- `GET /v1/spots/:uid/wind-field?bbox=` — harita için rüzgâr vektör ızgarası (veri; çizim client).
-- Auth: anonim JWT de erişir (login öncesi hava/spot okunmalı).
+- `GET /v1/spots/:uid/conditions` — "now" + verdict + confidence + best-window + sea + freshness (opsiyonel `?sport=`). ✅
+- `GET /v1/spots/:uid/forecast` — saatlik (48s) + 10 günlük şerit, saat başına decision. ✅
+- ~~`GET /v1/spots/:uid/wind-field?bbox=`~~ → **P1** (rüzgâr vektör ızgarası; çizim client; [[../otonom-kararlar]] §27).
+- Auth: anonim JWT de erişir (login öncesi hava/spot okunmalı). ✅
 
 ## 6. Servisler & mantık
 - `OpenMeteoClient` — forecast (`wind_speed_unit=ms`, UTC, `cell_selection=sea`, `forecast_days=11`) + marine + model-metadata; SI parse.
@@ -52,9 +52,11 @@ Public/anonim okuma; rate-limit. Open-Meteo atıf. Kişisel veri yok.
 ## 11. İmplementasyon adımları
 1. `weather_cache`+`weather_model_meta` tabloları. 2. errors/schemas. 3. `OpenMeteoClient`. 4. `weather.repository` (cache). 5. `WeatherService` (+spec) decision/best-window/shore/freshness. 6. `weather-refresh` + `weather-model-meta-refresh` task'leri. 7. routes + module + register. 8. lint/type/test.
 
-## 12. Açık sorular
-- Cache anahtarı spot-başına mı yoksa koordinat-bucket mı (yakın spotlar aynı grid hücresi paylaşabilir)? Öneri: spot-başına başla, bucket optimizasyonu sonra.
-- Best-window/decision cache'lensin mi yoksa her istekte türetilsin mi? Öneri: türet (ucuz), gerekirse cache.
+## 12. Açık sorular → kararlar
+- Cache anahtarı: **spot-başına** (spotUid+kind); bucket optimizasyonu ileride. ✅
+- Best-window/decision: **her istekte türetilir** (ucuz, cache'lenmez). ✅
+- Eşik tabloları benim varsayılanlarım — senin ayarın gerekli ([[../otonom-kararlar]] §24). ❓
+- Fast-follow'lar (thundering-herd, cadence-aware refresh, primary-sport default, daily-UTC, wind-field, live obs) [[../otonom-kararlar]] §27. ⏸️
 
 ## 13. Referanslar
 [[weather-openmeteo-mapping]] · [[decisions]] D-003/D-004 · [[metrics-catalog]] B

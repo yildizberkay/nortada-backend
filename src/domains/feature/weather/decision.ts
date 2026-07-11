@@ -33,6 +33,11 @@ const THRESHOLDS: Record<Sport, WindThreshold> = {
 const isThunderstorm = (code: number) => code >= 95;
 const isHeavyPrecip = (code: number) => [65, 67, 75, 82, 86].includes(code);
 
+// Convective Available Potential Energy — the PRE-storm lead-time signal
+// (weather_code only reaches 95 once lightning is already active). J/kg.
+const CAPE_WATCH = 1000; // building instability
+const CAPE_SKIP = 2500; // high thunderstorm risk
+
 const SEVERITY: Record<Decision, number> = { go: 0, watch: 1, skip: 2 };
 const worse = (a: Decision, b: Decision): Decision =>
   SEVERITY[a] >= SEVERITY[b] ? a : b;
@@ -42,6 +47,7 @@ export interface DecisionInput {
   windMs: number;
   gustMs: number;
   weatherCode: number;
+  capeJkg?: number;
   // Meteorological "from" direction; combined with shoreBearing → side.
   windDirectionDeg?: number;
   shoreBearingDeg?: number | null;
@@ -54,7 +60,7 @@ const sideOf = (input: DecisionInput): WindSide | undefined =>
 
 /** Go/Watch/Skip for a single hour. Modifiers can only downgrade. */
 export function computeDecision(input: DecisionInput): Decision {
-  const { sport, windMs, gustMs, weatherCode } = input;
+  const { sport, windMs, gustMs, weatherCode, capeJkg } = input;
   const t = THRESHOLDS[sport];
 
   if (isThunderstorm(weatherCode)) return "skip";
@@ -68,8 +74,23 @@ export function computeDecision(input: DecisionInput): Decision {
 
   // Gusts overpowering the sport's ceiling → caution even if the mean is fine.
   if (gustMs > t.maxMs) d = worse(d, "watch");
-  // Offshore wind blows the rider out to sea — a real safety downgrade.
-  if (sideOf(input) === "offshore") d = worse(d, "watch");
+
+  // Offshore wind blows the rider out to sea — the canonical life-threatening
+  // case. Scale with strength: strong offshore → skip; else watch. Cross-offshore
+  // (still a strong seaward component) gets a watch too.
+  const side = sideOf(input);
+  if (side === "offshore") {
+    d = worse(d, windMs > t.idealMaxMs ? "skip" : "watch");
+  } else if (side === "cross-offshore") {
+    d = worse(d, "watch");
+  }
+
+  // Pre-storm instability (before weather_code catches up).
+  if (capeJkg != null) {
+    if (capeJkg > CAPE_SKIP) d = worse(d, "skip");
+    else if (capeJkg > CAPE_WATCH) d = worse(d, "watch");
+  }
+
   if (isHeavyPrecip(weatherCode)) d = worse(d, "watch");
 
   return d;
@@ -96,6 +117,7 @@ export interface HourlySeries {
   windGustsMs: number[];
   windDirectionDeg: number[];
   weatherCode: number[];
+  capeJkg: number[];
 }
 
 export interface BestWindow {
@@ -125,6 +147,7 @@ export function bestWindow(
       windMs: hourly.windSpeedMs[i] ?? 0,
       gustMs: hourly.windGustsMs[i] ?? 0,
       weatherCode: hourly.weatherCode[i] ?? 0,
+      capeJkg: hourly.capeJkg[i],
       windDirectionDeg: hourly.windDirectionDeg[i],
       shoreBearingDeg,
     });
@@ -136,9 +159,11 @@ export function bestWindow(
       }
       peak = Math.max(peak, hourly.windSpeedMs[i] ?? 0);
     } else if (runStart !== -1) {
+      // `end` is the exclusive hour-boundary after the last go-hour, so a
+      // single go-hour reads as a 1h span (13:00–14:00), not 13:00–13:00.
       return {
         start: hourly.time[runStart],
-        end: hourly.time[i - 1],
+        end: hourly.time[i],
         peakWindMs: peak,
       };
     }

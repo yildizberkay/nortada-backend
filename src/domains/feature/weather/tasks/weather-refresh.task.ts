@@ -17,6 +17,7 @@ export const weatherRefreshTask = schedules.task({
   // Every 30 min — the "now" tick is a model nowcast that wants freshness.
   cron: "*/30 * * * *",
   maxDuration: 300,
+  retry: { maxAttempts: 3 },
   queue: { concurrencyLimit: 1 },
   run: async () => {
     initializeForTrigger();

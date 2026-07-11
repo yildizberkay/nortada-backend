@@ -41,10 +41,11 @@ export function buildContainer(db: DBManager) {
     ...deps,
     mergeReassigners: [favoriteReassigner],
   });
-  // Weather depends on spot (geo lookup + favorites hot set) — passed explicitly.
+  // Weather depends on spot (geo lookup + favorites hot set) — passed explicitly
+  // as a minimal port (SpotService satisfies it).
   const weather = createWeatherModule({
     ...deps,
-    spotService: spotServices.spotService,
+    spotPort: spotServices.spotService,
   });
 
   return {
