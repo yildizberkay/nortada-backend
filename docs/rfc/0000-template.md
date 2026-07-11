@@ -1,59 +1,130 @@
-# RFC-0000: <Başlık>
+# RFC-0000: <Title>
 
 <!--
-Bu dosya RFC ŞABLONUDUR. Yeni RFC = bu dosyayı kopyala → `docs/rfc/<NNNN>-<kebab-isim>.md`.
-Her RFC bu iskeleti kullanır (her bölüm dolmayabilir → "N/A" yaz, bölümü silme).
-Numara 4 haneli, sıralı. Status/Step meta tablosunu güncel tut.
+This file is the RFC TEMPLATE. New RFC = copy this file → `docs/rfc/<NNNN>-<kebab-name>.md`.
+Every RFC uses this skeleton. A section that does not apply → write "N/A" (do not delete the heading).
+Numbers are 4 digits, sequential. Keep the Status/Step meta table current.
+
+RFCs are engineering design documents, not changelog notes. Write them in English, at
+depth: a reader who has never seen the code should understand WHAT is built, WHY it is
+built that way, HOW it behaves at the edges, and WHAT was deliberately not built. Prefer
+concrete schemas, signatures, status codes, and examples over prose. For an already-shipped
+RFC, describe the system as-built and keep the rationale.
 -->
 
-|  |  |
-|---|---|
-| **RFC** | 0000 |
-| **Başlık** | <kısa başlık> |
-| **Status** | 🟡 Draft |
-| **Step** | <implementasyon adımı, ör. 2> |
-| **Depends on** | <RFC-XXXX, yoksa —> |
-| **Domain(ler)** | <platform/... veya feature/...> |
-| **Updated** | YYYY-MM-DD |
+|              |                                                   |
+| ------------ | ------------------------------------------------- |
+| **RFC**      | 0000                                              |
+| **Title**    | <short title>                                     |
+| **Status**   | 🟡 Draft                                          |
+| **Step**     | <implementation step, e.g. 2>                     |
+| **Depends on** | <RFC-XXXX, or —>                                |
+| **Domain(s)** | <platform/… or feature/…>                        |
+| **Updated**  | YYYY-MM-DD                                         |
 
-> **Status lejantı:** 🟡 Draft · 🚧 In Progress · ✅ Completed · 🗓️ Deferred · ❌ Rejected
-> RFC hayat döngüsü: implementasyona başlarken `🚧 In Progress`; bitince `✅ Completed`. İmplementasyon sırasında karar değişirse RFC güncellenir.
+> **Status legend:** 🟡 Draft · 🚧 In Progress · ✅ Completed · 🗓️ Deferred · ❌ Rejected
+> **Lifecycle:** set `🚧 In Progress` when implementation starts; `✅ Completed` when done. If a
+> decision changes during implementation, update the RFC to match what was actually built.
 
-## 1. Özet
-Tek paragraf: bu RFC neyi çözüyor.
+---
 
-## 2. Motivasyon / bağlam
-Neden gerekli; hangi kararlara ([[decisions]]) ve dökümanlara dayanıyor.
+## 1. Summary
 
-## 3. Kapsam (In / Out)
-**In:** bu RFC'nin ürettiği. **Out:** bilinçli dışarıda bırakılan / başka RFC'ye ait.
+One or two paragraphs: what this RFC delivers and the single most important design choice.
+A reader should be able to stop here and know what the change is.
 
-## 4. Veri modeli (Drizzle tabloları)
-`pgTable`/`pgEnum` tanımları, `id`+`uid` deseni, jsonb `$type`, ilişkiler, index'ler. Migration notu.
+## 2. Motivation & Context
 
-## 5. API yüzeyi (routes + OpenAPI)
-Endpoint'ler (`/v1/...`), method, auth gereksinimi, request/response Zod şemaları (`.meta({ref})`), operationId.
+- **Problem.** What is missing or wrong today that makes this necessary.
+- **Background.** The prior art / reference architecture / product context it builds on
+  (link the relevant `docs/` files and `[[decisions]]`).
+- **Goals.** The concrete outcomes this RFC must achieve (bullet list).
+- **Non-goals.** What is explicitly out of scope for this RFC (bullet list) — distinct from
+  §3 "Out" in that these are things a reader might *expect* here but that belong elsewhere.
 
-## 6. Servisler & mantık
-Service metotları, iş kuralları, orkestrasyon; hangi repository'lere/diğer servislere bağımlı.
+## 3. Scope (In / Out)
 
-## 7. Arka plan işleri (Trigger.dev)
-Task'ler (`<name>.{schema,task,trigger}.ts`), cron/schedules, tetikleme noktası. Yoksa N/A.
+- **In:** what this RFC produces.
+- **Out:** what is deliberately deferred or belongs to another RFC (name the RFC).
 
-## 8. Bağımlılıklar & entegrasyonlar
-Dış servisler (Clerk, RevenueCat, Open-Meteo, APNs...), env değişkenleri, diğer RFC'ler.
+## 4. Domain Model & Ubiquitous Language
 
-## 9. Güvenlik & gizlilik
-Auth/yetki, PII, veri sahipliği, rate-limit, hassas veri.
+The key concepts this RFC introduces and the exact terms used for them (so code, API, and
+docs agree). Define each entity/value-object and its lifecycle/state machine where relevant.
 
-## 10. Test
-Hangi service'lere `*.service.spec.ts`, kritik senaryolar (happy + error), mock'lanacak bağımlılıklar.
+## 5. Data Model (Drizzle)
 
-## 11. İmplementasyon adımları (checklist)
-Sıralı, kontrol edilebilir maddeler ("Yeni domain checklist"i ile hizalı).
+For each table: purpose, the full column list with **the rationale for non-obvious columns**,
+the `id` (integer identity PK) + `uid` (text uuid, public) pattern, jsonb columns typed
+`.$type<JsonValue>()`, enums (`pgEnum`), unique constraints, indexes (and the query each
+index serves), foreign keys + `onDelete` behavior, and relations. Note the migration
+(`npm run db:gen`) and any data-backfill/ordering concerns. Canonical SI units (D-006).
 
-## 12. Açık sorular
-Karara bağlanmamış noktalar.
+## 6. API Surface (routes + OpenAPI)
 
-## 13. Referanslar
-İlgili döküman/RFC/dış kaynak linkleri.
+First a table of all endpoints (method · path · auth · summary). Then, per endpoint:
+
+- **Auth:** anonymous JWT / Clerk / admin / none.
+- **Request:** the Zod schema (params/query/json), validation rules, limits.
+- **Response:** the Zod response schema (`.describe()` + `.meta({ ref })`), success shape
+  `{ data }`, and the meaningful status codes.
+- **Errors:** the `GenericError` codes/reasons this endpoint can return and when.
+- **Example:** a representative request/response (trimmed).
+
+## 7. Services & Business Logic
+
+The service methods (signatures), the algorithms and orchestration, the invariants they
+enforce, and the non-obvious edge cases + how each is handled. Call out transactions,
+idempotency, concurrency, and cross-domain calls (passed as explicit ports). A short
+sequence description for any multi-step flow.
+
+## 8. Background Jobs (Trigger.dev)
+
+Tasks (`<name>.{schema,task,trigger}.ts`) or `schedules.task` crons: payload schema, what
+the task does, retry/concurrency settings, where it is invoked from (services, never
+routes), and idempotency/recompute story. Otherwise `N/A`.
+
+## 9. Dependencies & Integrations
+
+External services (Clerk, RevenueCat, Open-Meteo, S3, APNs…), the env vars they need
+(`{NAMESPACE}_{SERVICE}_{CREDENTIAL}`), and dependencies on other RFCs (and what this RFC
+exposes for later RFCs — seams).
+
+## 10. Security & Privacy
+
+Authentication/authorization model, data ownership (user-scoping), PII and sensitive data,
+rate limiting, input hardening, and any threat considerations specific to this RFC.
+
+## 11. Observability
+
+What is logged (and at what level), what is reported as an exception vs. tracked as an
+event, and any metrics/dashboards this RFC should surface.
+
+## 12. Performance & Scalability
+
+Expected data volumes, hot paths, index/query cost, payload sizes, and how this behaves as
+usage grows (and what is intentionally deferred until it does).
+
+## 13. Testing Strategy
+
+Which services get co-located `*.service.spec.ts`, the critical scenarios (happy + error +
+edge), what is mocked (repositories, other services, infra ports), and any integration/manual
+tests that must be run before shipping.
+
+## 14. Alternatives Considered
+
+The main options weighed and why the chosen one won (kept short but concrete — this is where
+future readers learn what was already ruled out and why).
+
+## 15. Implementation Plan (checklist)
+
+Ordered, checkable steps aligned with the "Adding a New Domain" checklist in `CLAUDE.md`.
+
+## 16. Open Questions & Resolved Decisions
+
+Open points still to be decided, and (as they resolve) the decision + a link to
+`[[decisions]]` / `[[../otonom-kararlar]]`.
+
+## 17. References
+
+Related docs / RFCs / external sources.
