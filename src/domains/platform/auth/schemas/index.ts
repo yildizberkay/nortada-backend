@@ -20,6 +20,13 @@ export const linkSchema = z.object({
 });
 export type LinkInput = z.infer<typeof linkSchema>;
 
+export const refreshSchema = z.object({
+  // The opaque refresh token issued by /anonymous (or a prior /refresh). It is
+  // the credential here, so /refresh needs no bearer token.
+  refreshToken: z.string().min(1),
+});
+export type RefreshInput = z.infer<typeof refreshSchema>;
+
 // ── Responses ─────────────────────────────────────────────────────────────────
 
 export const userResponseSchema = z
@@ -32,10 +39,23 @@ export const userResponseSchema = z
   .describe("The authenticated user")
   .meta({ ref: "UserResponse" });
 
+// `expiresIn` on the responses below = access-token lifetime (seconds) so the
+// client knows when to call /refresh.
 export const anonymousAuthResponseSchema = z
   .object({
-    token: z.string(),
+    accessToken: z.string(),
+    refreshToken: z.string(),
+    expiresIn: z.number(),
     user: userResponseSchema,
   })
-  .describe("Anonymous auth token + user")
+  .describe("Anonymous access + refresh token pair + user")
   .meta({ ref: "AnonymousAuthResponse" });
+
+export const refreshResponseSchema = z
+  .object({
+    accessToken: z.string(),
+    refreshToken: z.string(),
+    expiresIn: z.number(),
+  })
+  .describe("A rotated access + refresh token pair")
+  .meta({ ref: "RefreshResponse" });

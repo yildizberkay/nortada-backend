@@ -13,6 +13,8 @@ import {
   anonymousAuthResponseSchema,
   anonymousAuthSchema,
   linkSchema,
+  refreshResponseSchema,
+  refreshSchema,
   userResponseSchema,
 } from "../schemas";
 
@@ -29,6 +31,15 @@ const bootstrapRateLimit = rateLimit({
   windowMs: 60_000,
   max: 20,
   keyPrefix: "auth-bootstrap",
+});
+
+// Refresh has its own bucket + higher budget: its legitimate cadence (silent
+// re-auth, app foreground) differs from bootstrap, and many devices can share an
+// IP behind NAT.
+const refreshRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: 60,
+  keyPrefix: "auth-refresh",
 });
 
 export const authRoute = new Hono<HonoContext>();
@@ -57,9 +68,43 @@ authRoute.post(
   zValidator("json", anonymousAuthSchema),
   async (c) => {
     const { deviceId } = c.req.valid("json");
-    const { token, user } =
+    const { accessToken, refreshToken, expiresIn, user } =
       await getContainer().authService.issueAnonymous(deviceId);
-    return c.json(HTTPResponse.success({ token, user: toUserResponse(user) }));
+    return c.json(
+      HTTPResponse.success({
+        accessToken,
+        refreshToken,
+        expiresIn,
+        user: toUserResponse(user),
+      }),
+    );
+  },
+);
+
+// Exchange a refresh token for a new access + refresh pair (rotation). The
+// refresh token is the credential, so no bearer auth — but rate-limited.
+authRoute.post(
+  "/refresh",
+  describeRoute({
+    operationId: "refreshSession",
+    tags: ["auth"],
+    responses: {
+      200: {
+        description: "A rotated access + refresh token pair",
+        content: {
+          "application/json": {
+            schema: resolver(successResponseSchema(refreshResponseSchema)),
+          },
+        },
+      },
+    },
+  }),
+  refreshRateLimit,
+  zValidator("json", refreshSchema),
+  async (c) => {
+    const { refreshToken } = c.req.valid("json");
+    const pair = await getContainer().authService.refresh(refreshToken);
+    return c.json(HTTPResponse.success(pair));
   },
 );
 

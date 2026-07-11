@@ -4,6 +4,7 @@ import type { User } from "@/db";
 import { GenericError } from "@/packages/error";
 
 import { AuthReason } from "../errors";
+import type { RefreshTokenRepository } from "../repositories/refresh-token.repository";
 import type { UserRepository } from "../repositories/user.repository";
 import { AuthService } from "./auth.service";
 import type { ClerkService } from "./clerk.service";
@@ -62,6 +63,7 @@ const clerkUser = (overrides: Partial<User> = {}): User =>
 
 const mockRepo = {
   findByUid: jest.fn(),
+  findById: jest.fn(),
   findByClerkUserId: jest.fn(),
   findByAnonymousDeviceId: jest.fn(),
   createAnonymous: jest.fn(),
@@ -71,17 +73,41 @@ const mockRepo = {
   transaction: jest.fn(),
 } as unknown as jest.Mocked<UserRepository>;
 
+const mockRefreshRepo = {
+  create: jest.fn(),
+  findByHash: jest.fn(),
+  rotate: jest.fn(),
+  revokeFamily: jest.fn(),
+  revokeAllForUser: jest.fn(),
+} as unknown as jest.Mocked<RefreshTokenRepository>;
+
 const mockClerk = {
   verifyToken: jest.fn(),
 } as unknown as jest.Mocked<ClerkService>;
 
 const mockReassigner = jest.fn();
 
+// A live refresh-token row (unexpired, unrevoked) unless overridden.
+const refreshRecord = (overrides = {}) => ({
+  id: 10,
+  uid: "rt-uid",
+  userId: 1,
+  tokenHash: "stored-hash",
+  familyId: "fam-1",
+  expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+  revokedAt: null,
+  replacedByHash: null,
+  createdAt: new Date(),
+  ...overrides,
+});
+
 describe("AuthService", () => {
   let service: AuthService;
 
   beforeEach(() => {
-    service = new AuthService(mockRepo, mockClerk, [mockReassigner]);
+    service = new AuthService(mockRepo, mockRefreshRepo, mockClerk, [
+      mockReassigner,
+    ]);
     // Run the merge transaction callback immediately with a fake executor.
     mockRepo.transaction.mockImplementation(async (fn) => fn({} as never));
   });
@@ -95,7 +121,13 @@ describe("AuthService", () => {
 
       expect(mockRepo.createAnonymous).not.toHaveBeenCalled();
       expect(result.user).toBe(user);
-      const { payload } = await jwtVerify(result.token, ANON_SECRET);
+      // A refresh token is persisted (hashed) and a raw one is returned.
+      expect(mockRefreshRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: user.id }),
+      );
+      expect(result.refreshToken).toEqual(expect.any(String));
+      expect(result.expiresIn).toBe(15 * 60);
+      const { payload } = await jwtVerify(result.accessToken, ANON_SECRET);
       expect(payload.sub).toBe(user.uid);
       expect(payload.tokenType).toBe("anonymous");
     });
@@ -108,8 +140,101 @@ describe("AuthService", () => {
       const result = await service.issueAnonymous("new-device");
 
       expect(mockRepo.createAnonymous).toHaveBeenCalledWith("new-device");
-      const { payload } = await jwtVerify(result.token, ANON_SECRET);
+      const { payload } = await jwtVerify(result.accessToken, ANON_SECRET);
       expect(payload.sub).toBe("fresh-uid");
+    });
+  });
+
+  describe("refresh", () => {
+    it("rotates a valid refresh token into a new access + refresh pair", async () => {
+      mockRefreshRepo.findByHash.mockResolvedValue(refreshRecord() as never);
+      mockRepo.findById.mockResolvedValue(anonUser());
+      // A live row back from rotate = the atomic revoke matched (not a race).
+      mockRefreshRepo.rotate.mockResolvedValue(refreshRecord() as never);
+
+      const result = await service.refresh("raw-refresh-token");
+
+      // Old token revoked + new one inserted (same family) atomically.
+      expect(mockRefreshRepo.rotate).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ userId: 1, familyId: "fam-1" }),
+      );
+      expect(result.refreshToken).toEqual(expect.any(String));
+      expect(result.expiresIn).toBe(15 * 60);
+      const { payload } = await jwtVerify(result.accessToken, ANON_SECRET);
+      expect(payload.sub).toBe("user-anon-uid");
+    });
+
+    it("treats a lost rotation race (concurrent reuse) as theft and kills the family", async () => {
+      mockRefreshRepo.findByHash.mockResolvedValue(refreshRecord() as never);
+      mockRepo.findById.mockResolvedValue(anonUser());
+      // Conditional revoke matched 0 rows → a concurrent /refresh already used it.
+      mockRefreshRepo.rotate.mockResolvedValue(null as never);
+
+      await expect(service.refresh("raced")).rejects.toMatchObject({
+        errorCode: "UNAUTHENTICATED",
+        options: { reason: AuthReason.REFRESH_TOKEN_REUSED },
+      });
+      expect(mockRefreshRepo.revokeFamily).toHaveBeenCalledWith("fam-1");
+    });
+
+    it("rejects (and kills the family) when the owner was upgraded to a real account", async () => {
+      // Branch-1 upgrade flips isAnonymous=false but leaves mergedIntoUserId null;
+      // the !isAnonymous backstop must still sever the anonymous refresh path.
+      mockRefreshRepo.findByHash.mockResolvedValue(refreshRecord() as never);
+      mockRepo.findById.mockResolvedValue(anonUser({ isAnonymous: false }));
+
+      await expect(service.refresh("post-upgrade")).rejects.toMatchObject({
+        errorCode: "UNAUTHENTICATED",
+        options: { reason: AuthReason.REFRESH_TOKEN_INVALID },
+      });
+      expect(mockRefreshRepo.revokeFamily).toHaveBeenCalledWith("fam-1");
+      expect(mockRefreshRepo.rotate).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown refresh token", async () => {
+      mockRefreshRepo.findByHash.mockResolvedValue(undefined as never);
+
+      await expect(service.refresh("nope")).rejects.toMatchObject({
+        errorCode: "UNAUTHENTICATED",
+        options: { reason: AuthReason.REFRESH_TOKEN_INVALID },
+      });
+      expect(mockRefreshRepo.rotate).not.toHaveBeenCalled();
+    });
+
+    it("detects reuse of a revoked token and revokes the whole family", async () => {
+      mockRefreshRepo.findByHash.mockResolvedValue(
+        refreshRecord({ revokedAt: new Date() }) as never,
+      );
+
+      await expect(service.refresh("replayed")).rejects.toMatchObject({
+        errorCode: "UNAUTHENTICATED",
+        options: { reason: AuthReason.REFRESH_TOKEN_REUSED },
+      });
+      expect(mockRefreshRepo.revokeFamily).toHaveBeenCalledWith("fam-1");
+      expect(mockRefreshRepo.rotate).not.toHaveBeenCalled();
+    });
+
+    it("rejects an expired refresh token", async () => {
+      mockRefreshRepo.findByHash.mockResolvedValue(
+        refreshRecord({ expiresAt: new Date(Date.now() - 1000) }) as never,
+      );
+
+      await expect(service.refresh("stale")).rejects.toMatchObject({
+        errorCode: "UNAUTHENTICATED",
+        options: { reason: AuthReason.REFRESH_TOKEN_EXPIRED },
+      });
+    });
+
+    it("revokes the family and rejects when the owning identity was retired", async () => {
+      mockRefreshRepo.findByHash.mockResolvedValue(refreshRecord() as never);
+      mockRepo.findById.mockResolvedValue(anonUser({ mergedIntoUserId: 2 }));
+
+      await expect(service.refresh("orphaned")).rejects.toMatchObject({
+        errorCode: "UNAUTHENTICATED",
+        options: { reason: AuthReason.REFRESH_TOKEN_INVALID },
+      });
+      expect(mockRefreshRepo.revokeFamily).toHaveBeenCalledWith("fam-1");
     });
   });
 
@@ -248,6 +373,10 @@ describe("AuthService", () => {
         displayName: null,
       });
       expect(mockRepo.markMergedInto).not.toHaveBeenCalled();
+      // The upgraded identity's anonymous refresh tokens are retired.
+      expect(mockRefreshRepo.revokeAllForUser).toHaveBeenCalledWith(
+        upgraded.id,
+      );
       expect(result).toBe(upgraded);
     });
 
@@ -264,6 +393,8 @@ describe("AuthService", () => {
 
       // Reassign runs before the anon row is retired, inside the transaction.
       expect(mockReassigner).toHaveBeenCalledWith(1, existing.id, {});
+      // Refresh tokens are revoked inside the same merge transaction.
+      expect(mockRefreshRepo.revokeAllForUser).toHaveBeenCalledWith(1, {});
       expect(mockRepo.markMergedInto).toHaveBeenCalledWith(1, existing.id, {});
       expect(mockRepo.tryUpgradeAnonymousToClerk).not.toHaveBeenCalled();
       expect(result).toBe(existing);

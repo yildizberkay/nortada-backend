@@ -277,6 +277,44 @@ export const userTable = pgTable(
 export type User = typeof userTable.$inferSelect;
 export type NewUser = typeof userTable.$inferInsert;
 
+// Refresh tokens for our own (anonymous-device) auth. The access token is
+// short-lived (~15 min JWT); this table backs the long-lived refresh + rotation.
+// Tokens are stored HASHED (SHA-256) — never plaintext. `familyId` ties one
+// login's rotation lineage together, so presenting an already-rotated token (a
+// theft signal) can revoke the whole family (reuse detection). Clerk sessions do
+// NOT use this table — Clerk manages its own token lifecycle.
+export const refreshTokenTable = pgTable(
+  "refresh_token",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => userTable.id, { onDelete: "cascade" }),
+    // SHA-256 hash of the opaque refresh token (never the token itself).
+    tokenHash: text("token_hash").notNull().unique(),
+    // Rotation lineage — all rotations descending from one login share a family.
+    familyId: text("family_id").notNull(),
+    expiresAt: timestamp("expires_at", {
+      precision: 3,
+      withTimezone: true,
+    }).notNull(),
+    // Set when this token is rotated or revoked. A revoked token presented again
+    // is a reuse/theft signal → the whole family is revoked.
+    revokedAt: timestamp("revoked_at", { precision: 3, withTimezone: true }),
+    // The hash that superseded this token on rotation (audit/lineage).
+    replacedByHash: text("replaced_by_hash"),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    index("refresh_token_user_id_idx").on(t.userId),
+    index("refresh_token_family_id_idx").on(t.familyId),
+    index("refresh_token_expires_at_idx").on(t.expiresAt),
+  ],
+);
+export type RefreshToken = typeof refreshTokenTable.$inferSelect;
+export type NewRefreshToken = typeof refreshTokenTable.$inferInsert;
+
 // ─── user profile (RFC-0003) ─────────────────────────────────────────────────
 // Global, app-wide personalization — one row per user. Values are preferences
 // only; canonical API values stay SI and unit conversion is client-side (D-006).
@@ -713,6 +751,7 @@ export type NewActivityEquipment = typeof activityEquipmentTable.$inferInsert;
 // `db.query.*` API is generated from this object.
 export const dbSchema = {
   user: userTable,
+  refreshToken: refreshTokenTable,
   userProfile: userProfileTable,
   userSportProfile: userSportProfileTable,
   spot: spotTable,

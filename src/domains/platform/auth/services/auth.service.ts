@@ -1,18 +1,25 @@
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+
 import { decodeJwt, jwtVerify, SignJWT } from "jose";
 
-import type { User } from "@/db";
+import type { NewRefreshToken, User } from "@/db";
 import { BaseUseCase } from "@/domains/platform/foundation";
 import { GenericError } from "@/packages/error";
 import type { MergeReassigner, RequestUser } from "@/types";
 
 import { AuthReason } from "../errors";
+import type { RefreshTokenRepository } from "../repositories/refresh-token.repository";
 import type { UserRepository } from "../repositories/user.repository";
 import type { ClerkService } from "./clerk.service";
 
-// Anonymous tokens are long-lived — the app holds one in the Keychain for the
-// device's whole anonymous lifetime. Low-privilege (own data only), so a long
-// TTL is acceptable; rotation happens naturally on link/login.
-const ANONYMOUS_TOKEN_TTL = "365d";
+// Access tokens are SHORT-LIVED (RFC-0002, Berkay 2026-07-11): a stolen token is
+// useful for minutes, not a year. The client refreshes silently via the refresh
+// token before expiry. 15 min balances churn vs. exposure.
+const ACCESS_TOKEN_TTL_SEC = 15 * 60;
+// Refresh tokens are long-lived and rotated on every use; the app keeps the
+// current one in the Keychain. 60 days ≈ how long a device can be offline and
+// still refresh without a full re-bootstrap.
+const REFRESH_TOKEN_TTL_SEC = 60 * 24 * 60 * 60;
 // Custom claim marking our own tokens so the middleware can tell them apart from
 // Clerk tokens without a verify round-trip.
 const ANONYMOUS_TOKEN_TYPE = "anonymous";
@@ -21,14 +28,29 @@ const ANONYMOUS_TOKEN_TYPE = "anonymous";
 const ANONYMOUS_TOKEN_ISSUER = "splash-anon";
 const ANONYMOUS_TOKEN_AUDIENCE = "splash-api";
 
-export interface AnonymousAuthResult {
-  token: string;
+// Refresh tokens are opaque high-entropy strings stored HASHED — the raw value
+// exists only in transit and in the client Keychain.
+const hashToken = (raw: string): string =>
+  createHash("sha256").update(raw).digest("hex");
+const generateRefreshTokenRaw = (): string =>
+  randomBytes(32).toString("base64url");
+
+/** A freshly-minted access + refresh pair. `expiresIn` is the access-token
+ * lifetime in seconds so the client knows when to refresh. */
+export interface TokenPair {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+}
+
+export interface AnonymousAuthResult extends TokenPair {
   user: User;
 }
 
 export class AuthService extends BaseUseCase {
   constructor(
     private readonly userRepository: UserRepository,
+    private readonly refreshTokenRepository: RefreshTokenRepository,
     private readonly clerkService: ClerkService,
     // One per data-owning domain (spot/favorites, later activity). Run inside
     // the merge transaction so an account-link never half-moves owned data.
@@ -39,6 +61,36 @@ export class AuthService extends BaseUseCase {
 
   private get anonymousSecret(): Uint8Array {
     return new TextEncoder().encode(this.config.auth.anonymousJwtSecret);
+  }
+
+  /** Mint a short-lived access token (our HS256 anonymous JWT). */
+  private mintAccessToken(user: User): Promise<string> {
+    return new SignJWT({ tokenType: ANONYMOUS_TOKEN_TYPE })
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(user.uid)
+      .setIssuer(ANONYMOUS_TOKEN_ISSUER)
+      .setAudience(ANONYMOUS_TOKEN_AUDIENCE)
+      .setIssuedAt()
+      .setExpirationTime(`${ACCESS_TOKEN_TTL_SEC}s`)
+      .sign(this.anonymousSecret);
+  }
+
+  /** Build a persistable refresh-token row (hashed) + return the raw value to
+   * hand to the client once. */
+  private buildRefreshToken(
+    userId: number,
+    familyId: string,
+  ): { raw: string; row: NewRefreshToken } {
+    const raw = generateRefreshTokenRaw();
+    return {
+      raw,
+      row: {
+        userId,
+        tokenHash: hashToken(raw),
+        familyId,
+        expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_SEC * 1000),
+      },
+    };
   }
 
   private toRequestUser(user: User): RequestUser {
@@ -52,9 +104,10 @@ export class AuthService extends BaseUseCase {
   }
 
   /**
-   * Bootstrap an anonymous identity for a device. Idempotent: the same
-   * `deviceId` always resolves to the same user row, so a reinstall that keeps
-   * the Keychain id keeps its history.
+   * Bootstrap an anonymous identity for a device and issue the first token pair.
+   * Idempotent on `deviceId`: the same device always resolves to the same user
+   * row (a reinstall that keeps the Keychain id keeps its history), but each
+   * bootstrap starts a fresh refresh-token family.
    */
   async issueAnonymous(deviceId: string): Promise<AnonymousAuthResult> {
     const existing =
@@ -62,16 +115,86 @@ export class AuthService extends BaseUseCase {
     const user =
       existing ?? (await this.userRepository.createAnonymous(deviceId));
 
-    const token = await new SignJWT({ tokenType: ANONYMOUS_TOKEN_TYPE })
-      .setProtectedHeader({ alg: "HS256" })
-      .setSubject(user.uid)
-      .setIssuer(ANONYMOUS_TOKEN_ISSUER)
-      .setAudience(ANONYMOUS_TOKEN_AUDIENCE)
-      .setIssuedAt()
-      .setExpirationTime(ANONYMOUS_TOKEN_TTL)
-      .sign(this.anonymousSecret);
+    const accessToken = await this.mintAccessToken(user);
+    const { raw, row } = this.buildRefreshToken(user.id, randomUUID());
+    await this.refreshTokenRepository.create(row);
 
-    return { token, user };
+    return {
+      accessToken,
+      refreshToken: raw,
+      expiresIn: ACCESS_TOKEN_TTL_SEC,
+      user,
+    };
+  }
+
+  /**
+   * Exchange a refresh token for a new access + refresh pair (rotation). The old
+   * refresh token is revoked; the new one stays in the same family. Replaying an
+   * already-rotated token is treated as theft — the whole family is revoked.
+   */
+  async refresh(rawRefreshToken: string): Promise<TokenPair> {
+    const presentedHash = hashToken(rawRefreshToken);
+    const record = await this.refreshTokenRepository.findByHash(presentedHash);
+
+    if (!record) {
+      throw new GenericError("UNAUTHENTICATED", {
+        reason: AuthReason.REFRESH_TOKEN_INVALID,
+        message: "Invalid refresh token",
+      });
+    }
+    // Reuse detection: a revoked token was replayed → assume the family is
+    // compromised and revoke every token descended from that login.
+    if (record.revokedAt !== null) {
+      await this.refreshTokenRepository.revokeFamily(record.familyId);
+      throw new GenericError("UNAUTHENTICATED", {
+        reason: AuthReason.REFRESH_TOKEN_REUSED,
+        message: "Refresh token has already been used",
+      });
+    }
+    if (record.expiresAt.getTime() <= Date.now()) {
+      throw new GenericError("UNAUTHENTICATED", {
+        reason: AuthReason.REFRESH_TOKEN_EXPIRED,
+        message: "Refresh token has expired",
+      });
+    }
+
+    const user = await this.userRepository.findById(record.userId);
+    // Refresh tokens only ever belong to a LIVE anonymous device. If the owner is
+    // gone, retired by a link (`mergedIntoUserId`), or upgraded in place to a
+    // real account (`!isAnonymous`), the token can never be valid again — this is
+    // the durable backstop that severs the anonymous refresh path on link even if
+    // an explicit revoke was missed. Revoke the family and reject.
+    if (!user || user.mergedIntoUserId !== null || !user.isAnonymous) {
+      await this.refreshTokenRepository.revokeFamily(record.familyId);
+      throw new GenericError("UNAUTHENTICATED", {
+        reason: AuthReason.REFRESH_TOKEN_INVALID,
+        message: "Refresh token is no longer valid",
+      });
+    }
+
+    // Rotate atomically. A null result means a concurrent /refresh already
+    // consumed this token → treat the loser as reuse (revoke the whole family).
+    const { raw, row } = this.buildRefreshToken(user.id, record.familyId);
+    const rotated = await this.refreshTokenRepository.rotate(
+      presentedHash,
+      row,
+    );
+    if (!rotated) {
+      await this.refreshTokenRepository.revokeFamily(record.familyId);
+      throw new GenericError("UNAUTHENTICATED", {
+        reason: AuthReason.REFRESH_TOKEN_REUSED,
+        message: "Refresh token has already been used",
+      });
+    }
+
+    const accessToken = await this.mintAccessToken(user);
+    return { accessToken, refreshToken: raw, expiresIn: ACCESS_TOKEN_TTL_SEC };
+  }
+
+  /** Maintenance: delete expired refresh tokens (invoked by the cleanup cron).
+   * Revoked-but-unexpired reuse tripwires are preserved (see the repository). */
+  async cleanupExpiredRefreshTokens(): Promise<number> {
+    return this.refreshTokenRepository.deleteExpired();
   }
 
   /**
@@ -103,6 +226,9 @@ export class AuthService extends BaseUseCase {
         algorithms: ["HS256"],
         issuer: ANONYMOUS_TOKEN_ISSUER,
         audience: ANONYMOUS_TOKEN_AUDIENCE,
+        // Small tolerance for NTP skew across instances — access tokens are now
+        // short-lived (15 min), so there's less margin than the old 365d token.
+        clockTolerance: 10,
       });
       if (payload.tokenType !== ANONYMOUS_TOKEN_TYPE) {
         throw new Error("wrong token type");
@@ -225,6 +351,10 @@ export class AuthService extends BaseUseCase {
         },
       );
       if (upgraded) {
+        // The anonymous session is now a real account — retire its refresh
+        // tokens so the old anonymous refresh flow can't mint access tokens for
+        // the upgraded identity. The client uses its Clerk session from here.
+        await this.refreshTokenRepository.revokeAllForUser(upgraded.id);
         return upgraded;
       }
     }
@@ -245,6 +375,9 @@ export class AuthService extends BaseUseCase {
       for (const reassign of this.mergeReassigners) {
         await reassign(anonUser.id, target.id, tx);
       }
+      // Retire the anonymous session's refresh tokens inside the same merge
+      // transaction — a retired identity must not be refreshable.
+      await this.refreshTokenRepository.revokeAllForUser(anonUser.id, tx);
       await this.userRepository.markMergedInto(anonUser.id, target.id, tx);
     });
     return target;

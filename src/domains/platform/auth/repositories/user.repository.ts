@@ -45,6 +45,13 @@ export class UserRepository extends BaseRepository {
     });
   }
 
+  async findById(id: number): Promise<User | undefined> {
+    return this.dbClient.query.user.findFirst({
+      columns: userColumns,
+      where: eq(userTable.id, id),
+    });
+  }
+
   async findByClerkUserId(clerkUserId: string): Promise<User | undefined> {
     return this.dbClient.query.user.findFirst({
       columns: userColumns,

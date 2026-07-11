@@ -1,6 +1,7 @@
 import type { ModuleDeps } from "@/container";
 import type { MergeReassigner } from "@/types";
 
+import { RefreshTokenRepository } from "./repositories/refresh-token.repository";
 import { UserRepository } from "./repositories/user.repository";
 import { AuthService } from "./services/auth.service";
 import { ClerkService } from "./services/clerk.service";
@@ -13,9 +14,11 @@ export interface AuthModuleDeps extends ModuleDeps {
 
 export function createAuthModule({ db, mergeReassigners }: AuthModuleDeps) {
   const userRepository = new UserRepository(db);
+  const refreshTokenRepository = new RefreshTokenRepository(db);
   const clerkService = new ClerkService();
   const authService = new AuthService(
     userRepository,
+    refreshTokenRepository,
     clerkService,
     mergeReassigners,
   );
