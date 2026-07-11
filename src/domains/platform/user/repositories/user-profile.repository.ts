@@ -35,8 +35,6 @@ const sportProfileColumns = {
   userId: true,
   sport: true,
   cardSlots: true,
-  planingThresholdMps: true,
-  foilingThresholdMps: true,
   prefs: true,
   createdAt: true,
   updatedAt: true,

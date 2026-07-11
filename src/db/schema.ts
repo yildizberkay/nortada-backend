@@ -266,9 +266,10 @@ export const userSportProfileTable = pgTable(
     sport: sportEnum("sport").notNull(),
     // Null → fall back to the derived defaults for this sport.
     cardSlots: summaryMetricEnum("card_slots").array(),
-    // Speed thresholds in canonical SI metres-per-second (Mps, NOT milliseconds).
-    planingThresholdMps: real("planing_threshold_mps"),
-    foilingThresholdMps: real("foiling_threshold_mps"),
+    // Open jsonb bag for per-sport tuning — only some sports use each key, so a
+    // flexible bag beats sparse dedicated columns. Holds e.g.
+    // `planingThresholdMps` / `foilingThresholdMps` (canonical SI m/s), which
+    // only windsurf/wing use.
     prefs: jsonb("prefs").$type<JsonValue>(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
@@ -287,7 +288,7 @@ export type NewUserSportProfile = typeof userSportProfileTable.$inferInsert;
 // doublePrecision (float4 loses longitude precision). `shoreBearingDeg` is the
 // core IP: wind direction → side/on/off-shore is derived from it at query time.
 export const spotTable = pgTable(
-  "spot",
+  "watersport_spot",
   {
     id: idColumn(),
     uid: uidColumn(),
@@ -319,9 +320,9 @@ export const spotTable = pgTable(
     // btree range-scans only the leading column (latitude); longitude is an
     // in-index filter. Fine at ~30k rows (D-003); revisit with cube/earthdistance
     // GiST if the dataset grows.
-    index("spot_lat_lon_idx").on(t.latitude, t.longitude),
-    index("spot_status_idx").on(t.status),
-    uniqueIndex("spot_osm_id_key")
+    index("watersport_spot_lat_lon_idx").on(t.latitude, t.longitude),
+    index("watersport_spot_status_idx").on(t.status),
+    uniqueIndex("watersport_spot_osm_id_key")
       .on(t.osmId)
       .where(sql`${t.osmId} IS NOT NULL`),
   ],
@@ -330,11 +331,11 @@ export const spotTable = pgTable(
 export type Spot = typeof spotTable.$inferSelect;
 export type NewSpot = typeof spotTable.$inferInsert;
 
-// A user's favorited spots. Lives with the spot feature (not platform/user) so
-// the FK to `spot` doesn't force a platform→feature import. Feeds the weather
-// hot-set (D-004).
+// A user's favorited spots (DB table `user_favorite` — user-scoped naming).
+// Lives with the spot feature (not platform/user) so the FK to the spot doesn't
+// force a platform→feature import. Feeds the weather hot-set (D-004).
 export const favoriteTable = pgTable(
-  "favorite",
+  "user_favorite",
   {
     id: idColumn(),
     uid: uidColumn(),
@@ -346,7 +347,7 @@ export const favoriteTable = pgTable(
       .references(() => spotTable.id),
     createdAt: createdAtColumn(),
   },
-  (t) => [uniqueIndex("favorite_user_spot_key").on(t.userId, t.spotId)],
+  (t) => [uniqueIndex("user_favorite_user_spot_key").on(t.userId, t.spotId)],
 );
 
 export type Favorite = typeof favoriteTable.$inferSelect;

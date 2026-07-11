@@ -3,7 +3,7 @@ import type { SpotGeo } from "@/domains/feature/spot/types";
 import type {
   ForecastPayload,
   MarinePayload,
-  OpenMeteoClient,
+  WeatherProvider,
 } from "@/packages/open-meteo";
 
 import type { WeatherRepository } from "../repositories/weather.repository";
@@ -61,7 +61,7 @@ const mockClient = {
   fetchForecast: jest.fn(),
   fetchMarine: jest.fn(),
   fetchModelMeta: jest.fn(),
-} as unknown as jest.Mocked<OpenMeteoClient>;
+} as unknown as jest.Mocked<WeatherProvider>;
 
 const mockRepo = {
   findCache: jest.fn(),

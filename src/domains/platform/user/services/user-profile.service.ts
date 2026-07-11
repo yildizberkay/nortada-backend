@@ -162,8 +162,6 @@ export class UserProfileService extends BaseUseCase {
   ): Promise<SportProfileResponse> {
     const saved = await this.repository.upsertSportProfile(user.id, sport, {
       cardSlots: input.cardSlots ?? null,
-      planingThresholdMps: input.planingThresholdMps ?? null,
-      foilingThresholdMps: input.foilingThresholdMps ?? null,
       prefs: (input.prefs ?? null) as JsonValue | null,
     });
 
@@ -193,8 +191,7 @@ export class UserProfileService extends BaseUseCase {
     return {
       sport: row.sport,
       cardSlots,
-      planingThresholdMps: row.planingThresholdMps,
-      foilingThresholdMps: row.foilingThresholdMps,
+      prefs: (row.prefs ?? null) as SportProfileResponse["prefs"],
     };
   }
 }

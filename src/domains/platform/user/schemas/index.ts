@@ -43,11 +43,10 @@ export const sportParamSchema = z.object({
 });
 
 // PUT /me/sport-profiles/:sport — full replacement (idempotent). Omitted fields
-// clear the corresponding override (→ null). Thresholds are canonical SI m/s.
+// clear the override (→ null). `prefs` is an open per-sport bag (e.g.
+// planingThresholdMps / foilingThresholdMps in canonical SI m/s).
 export const upsertSportProfileSchema = z.object({
   cardSlots: z.array(summaryMetric).length(4).nullable().optional(),
-  planingThresholdMps: z.number().positive().nullable().optional(),
-  foilingThresholdMps: z.number().positive().nullable().optional(),
   prefs: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export type UpsertSportProfileInput = z.infer<typeof upsertSportProfileSchema>;
@@ -80,8 +79,8 @@ export const sportProfileResponseSchema = z
     sport,
     // Effective slots: per-sport override → primary-sport slots → derived defaults.
     cardSlots: z.array(summaryMetric),
-    planingThresholdMps: z.number().nullable(),
-    foilingThresholdMps: z.number().nullable(),
+    // Open per-sport tuning bag (planing/foiling thresholds, etc.), or null.
+    prefs: z.record(z.string(), z.unknown()).nullable(),
   })
   .describe("Per-sport profile override (effective)")
   .meta({ ref: "SportProfileResponse" });

@@ -14,19 +14,31 @@ interface WindThreshold {
 }
 
 /**
- * Per-sport ideal wind bands in canonical SI m/s. These are reasoned defaults
- * (the PRD's exact §12.6 matrix wasn't on disk) and are meant to be TUNED — see
- * docs/otonom-kararlar.md. SUP/kayak invert the usual logic: flat water is best,
- * so more wind is worse (ideal band starts at 0).
+ * Per-sport ideal wind bands in canonical SI m/s (1 kt ≈ 0.5144 m/s). Bands are
+ * research-backed from watersports sources (windup.live, mackiteboarding,
+ * kiteworldwide, dinghy/Beaufort guides, SUP/kayak safety guides — see
+ * docs/otonom-kararlar.md §24) at a general/INTERMEDIATE skill level. Per-skill
+ * bands (a beginner's ceiling is much lower) are a documented fast-follow tied
+ * to threading the user's experience in. SUP/kayak invert the usual logic —
+ * flat water is best, so more wind is worse (ideal band starts at 0).
+ *
+ *   sport     too-light(skip) │  IDEAL (go)  │ too-strong(skip)   [knots]
+ *   windsurf     <10           │   12 – 25    │   >35
+ *   wingfoil     <11           │   13 – 22    │   >30
+ *   kitesurf     <10           │   12 – 25    │   >33
+ *   sailing      <4            │    8 – 16    │   >25   (dinghy reefs ~20)
+ *   sup           —            │    0 – 5     │   >15
+ *   kayak         —            │    0 – 6     │   >16
+ *   other        <4            │    8 – 20    │   >30
  */
 const THRESHOLDS: Record<Sport, WindThreshold> = {
-  windsurf: { minMs: 5, idealMinMs: 7, idealMaxMs: 14, maxMs: 20 },
-  wingfoil: { minMs: 5, idealMinMs: 6, idealMaxMs: 12, maxMs: 18 },
-  kitesurf: { minMs: 5, idealMinMs: 6, idealMaxMs: 13, maxMs: 18 },
-  sailing: { minMs: 3, idealMinMs: 4, idealMaxMs: 10, maxMs: 16 },
-  sup: { minMs: 0, idealMinMs: 0, idealMaxMs: 4, maxMs: 8 },
-  kayak: { minMs: 0, idealMinMs: 0, idealMaxMs: 5, maxMs: 9 },
-  other: { minMs: 4, idealMinMs: 5, idealMaxMs: 12, maxMs: 18 },
+  windsurf: { minMs: 5.1, idealMinMs: 6.2, idealMaxMs: 12.9, maxMs: 18.0 },
+  wingfoil: { minMs: 5.7, idealMinMs: 6.7, idealMaxMs: 11.3, maxMs: 15.4 },
+  kitesurf: { minMs: 5.1, idealMinMs: 6.2, idealMaxMs: 12.9, maxMs: 17.0 },
+  sailing: { minMs: 2.1, idealMinMs: 4.1, idealMaxMs: 8.2, maxMs: 12.9 },
+  sup: { minMs: 0, idealMinMs: 0, idealMaxMs: 2.6, maxMs: 7.7 },
+  kayak: { minMs: 0, idealMinMs: 0, idealMaxMs: 3.1, maxMs: 8.2 },
+  other: { minMs: 2.1, idealMinMs: 4.1, idealMaxMs: 10.3, maxMs: 15.4 },
 };
 
 // WMO weather codes.

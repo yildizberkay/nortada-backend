@@ -366,17 +366,33 @@ Cross-domain transaction, `DBExecutor` (`PgDatabase<any,any,any>`) tipiyle threa
 
 # RFC-0005 (Hava) kararları
 
-## 24. Karar motoru eşikleri = benim mantıklı varsayılanlarım ❓ (senin ayarın gerekli)
+## 24. Karar motoru eşikleri = ARTIK ARAŞTIRMA-TABANLI ✅ (senin isteğinle güncellendi)
 
-**Karar:** `decision.ts`'te spor başına rüzgâr bantları (m/s) benim belirlediğim
-makul değerler (PRD §12.6 matrisi diskte yoktu). Örn. windsurf go=7-14 m/s,
-SUP tersine (0-4 m/s go, çok rüzgâr skip).
+**Karar:** İlk hâli benim varsayımımdı; senin "denizcilik yüzyıllardır var, iyi
+İngilizce kaynaklardan araştır" demenle **güvenilir watersports kaynaklarından**
+araştırıp gerçek ideal aralıklarla güncelledim (genel/**orta seviye** için, knot):
 
-**Neden:** Karar motorunu çalışır kılmak için bir eşik tablosu gerekliydi.
-Değerler `THRESHOLDS` sabitinde tek yerde, ayarlaması kolay.
+| Spor | Çok az (skip) | **İDEAL (go)** | Çok güçlü (skip) | Kaynak notu |
+|---|---|---|---|---|
+| Windsurf | <10 | **12–25** | >35 | planing ~12kt'de başlar, sweet spot 15-25 |
+| Wingfoil | <11 | **13–22** | >30 | pratik min 12-15, ideal 16-20 |
+| Kitesurf | <10 | **12–25** | >33 | min ~12, sweet spot 15-25 |
+| Sailing | <4 | **8–16** | >25 | dinghy ~20kt'de reef/kıyıya |
+| SUP | — | **0–5** | >15 | düz su ≤5kt, >15 zor/tehlikeli |
+| Kayak | — | **0–6** | >16 | sea kayak biraz daha toleranslı |
+| Other | <4 | **8–20** | >30 | genel watersport |
 
-**Onayın gerekli:** Gelince gerçek eşikleri (spor+seviye) ver, `THRESHOLDS`'u
-güncelleyelim. Skill-level ayarı da (beginner daha dar bant) eklenecek.
+Değerler m/s'ye çevrildi, `decision.ts` `THRESHOLDS`'ta (knot annotasyonları + kaynaklar comment'te).
+
+**Kaynaklar:** windup.live (windsurf/kite knots-to-plane), mackiteboarding &
+kiteworldwide (wing/kite), dinghy sailing + Beaufort rehberleri, SUP/kayak
+güvenlik rehberleri (pumpedupsup, glidesup). Detay comment'te.
+
+**Hâlâ senin girdin faydalı olur (bloklamaz):** (a) bu aralıkları kendi
+deneyiminle ince ayarlamak istersen tek satır; (b) **seviye başına** bant
+(başlangıç windsurfçünün tavanı 25 değil ~18kt olmalı) — bunu eklemek için
+kullanıcının `experience`'ını karara threadlemek gerek (primary-sport fast-follow
+ile birlikte, §27). Şimdilik orta-seviye tek tablo.
 
 ## 25. Güvenlik downgrade'leri: CAPE + offshore ölçekli ✅ (review-driven)
 
@@ -421,6 +437,39 @@ deseni izleyecek); task'lara `retry:{maxAttempts:3}` eklendi.
 - **wind-field endpoint** (RFC §5) → P1 (rüzgâr vektör ızgarası; çizim client).
 - Marine stale-fallback, visibility/uv_index fetch, tide/wave/apparent-temp
   response'ta yüzeye çıkarma, Open-Meteo yanıtını Zod ile doğrulama.
+
+---
+
+# Berkay review refinements (canlı, RFC-0006 öncesi)
+
+## 28. Şema/isim review düzeltmeleri ✅ (Berkay geri bildirimi 2026-07-11)
+
+Berkay dönünce şemayı gözden geçirdi; şu değişiklikleri yaptım:
+
+1. **Tekil tablo isimleri** (`user`, `watersport_spot`, `weather_cache`…) → onaylandı,
+   tavsiye edilen konvansiyon (brandscale de böyle). Değişiklik yok.
+2. **`user_sport_profile.planing/foilingThresholdMps` kolonları kaldırıldı → `prefs`
+   jsonb'ye taşındı.** Gerekçe (Berkay): bu eşikler yalnız bazı sporlarda anlamlı
+   (SUP/kayak'ta yok) → seyrek dedicated `real` kolonlar yerine esnek jsonb bag.
+   Artık `prefs: { planingThresholdMps, foilingThresholdMps, ... }`. API'de
+   sport-profile = `{ cardSlots, prefs }`.
+3. **`favorite` → `user_favorite`** (DB tablo adı). Gerekçe (Berkay): user'a bağlı
+   şeyler `user_` önekiyle başlasın. TS var `favoriteTable` aynı kaldı (Drizzle
+   TS↔DB adını ayırır).
+4. **`spot` → `watersport_spot`** (DB tablo adı + index'ler). Gerekçe (Berkay):
+   "spot" tek başına çok generic. Kod sembolleri (`spotTable`, `SpotService`,
+   `feature/spot`, `spot_*` enum'lar) idiomatic kaldı — watersports bağlamında
+   "spot" sektör terimi; tüm kod-seviyesi rename 5 RFC boyunca büyük mekanik churn,
+   düşük okunabilirlik kazancı. İstersen tam kod rename'i ayrı yaparız.
+5. **`OpenMeteoClient` → `WeatherProvider` interface'i.** Gerekçe (Berkay): ileride
+   başka hava sağlayıcı gelirse hepsi aynı arayüze uysun (DIP). `WeatherService`
+   artık concrete client'a değil `WeatherProvider`'a bağlı; `OpenMeteoClient implements
+   WeatherProvider`. İkinci sağlayıcı (METAR/şamandıra) aynı arayüzü sağlar.
+
+**Migration:** DB hiç apply edilmediği için (docker registry engelli, §0) migration'ları
+tek temiz `0000`'a **konsolide ettim** (rename/drop cruft yerine final şema). Per-RFC
+şema evrimi git history'de (schema.ts diff'leri) korunuyor. Gerçek deploy öncesi zaten
+squash edilirdi.
 
 ---
 

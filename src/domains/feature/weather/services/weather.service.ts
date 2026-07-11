@@ -8,7 +8,7 @@ import {
   FORECAST_MODEL,
   type ForecastPayload,
   type MarinePayload,
-  type OpenMeteoClient,
+  type WeatherProvider,
 } from "@/packages/open-meteo";
 
 import {
@@ -48,7 +48,7 @@ export interface WeatherSpotPort {
 export class WeatherService extends BaseUseCase {
   constructor(
     private readonly weatherRepository: WeatherRepository,
-    private readonly openMeteoClient: OpenMeteoClient,
+    private readonly weatherProvider: WeatherProvider,
     private readonly spotPort: WeatherSpotPort,
   ) {
     super();
@@ -160,7 +160,7 @@ export class WeatherService extends BaseUseCase {
   }
 
   async refreshModelMeta(): Promise<void> {
-    const meta = await this.openMeteoClient.fetchModelMeta(FORECAST_MODEL);
+    const meta = await this.weatherProvider.fetchModelMeta(FORECAST_MODEL);
     await this.weatherRepository.upsertModelMeta({
       model: FORECAST_MODEL,
       lastRunAvailabilityTime: meta.lastRunAvailabilityTime,
@@ -249,7 +249,7 @@ export class WeatherService extends BaseUseCase {
   private async fetchAndCacheForecast(
     spot: SpotGeo,
   ): Promise<Fetched<ForecastPayload>> {
-    const payload = await this.openMeteoClient.fetchForecast(
+    const payload = await this.weatherProvider.fetchForecast(
       spot.latitude,
       spot.longitude,
     );
@@ -284,7 +284,7 @@ export class WeatherService extends BaseUseCase {
   private async fetchAndCacheMarine(
     spot: SpotGeo,
   ): Promise<Fetched<MarinePayload>> {
-    const payload = await this.openMeteoClient.fetchMarine(
+    const payload = await this.weatherProvider.fetchMarine(
       spot.latitude,
       spot.longitude,
     );

@@ -42,8 +42,6 @@ const sportRow = (
     userId: 1,
     sport: "sup",
     cardSlots: null,
-    planingThresholdMps: null,
-    foilingThresholdMps: null,
     prefs: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -206,14 +204,15 @@ describe("UserProfileService", () => {
           sportRow({ sport, ...(values as Partial<UserSportProfile>) }),
       );
 
-      await service.upsertSportProfile(user, "sup", { foilingThresholdMps: 8 });
+      await service.upsertSportProfile(user, "sup", {
+        prefs: { foilingThresholdMps: 8 },
+      });
 
-      // planing threshold not sent → cleared to null (PUT semantics).
+      // cardSlots not sent → cleared to null (PUT semantics); thresholds now
+      // live inside the prefs bag.
       expect(mockRepo.upsertSportProfile).toHaveBeenCalledWith(1, "sup", {
         cardSlots: null,
-        planingThresholdMps: null,
-        foilingThresholdMps: 8,
-        prefs: null,
+        prefs: { foilingThresholdMps: 8 },
       });
     });
   });

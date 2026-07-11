@@ -26,7 +26,7 @@ App `UserProfile` şu an in-memory ("persistence lands with the backend"). Globa
 
 ## 4. Veri modeli (Drizzle) — sevk edilen hâli
 **`user_profile`** (global, `userId` unique) — `primarySport`, `sports[]`, `experience`, `goal`, `focus`, `activityFilter?` (null=All Sports), `cardSlots[]` (primary sport'un metrikleri — app `UserProfile.cardSlots`), `defaultActivityPeriod`, `windUnit`, `distanceUnit`, `temperatureUnit`. Birim/goal/metrik enum'ları `pgEnum` (app sözlüğünden).
-**`user_sport_profile`** (spor başına override, `(userId, sport)` unique) — `sport`, `cardSlots[]?` (null→türetilmiş default), `planingThresholdMps?`, `foilingThresholdMps?` (kanonik SI m/s), `prefs jsonb`. Layout alanları RFC-0006'da eklenecek.
+**`user_sport_profile`** (spor başına override, `(userId, sport)` unique) — `sport`, `cardSlots[]?` (null→türetilmiş default), `prefs jsonb` (planing/foiling eşikleri dâhil per-sport tuning bag — [[../otonom-kararlar]] §28). Layout alanları RFC-0006'da eklenecek.
 **`favorite`** — RFC-0004'e ertelendi (`userId`, `spotId`, unique `(userId, spotId)`).
 
 ## 5. API yüzeyi

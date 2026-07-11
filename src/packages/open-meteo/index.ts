@@ -53,6 +53,18 @@ export interface ModelMeta {
   updateIntervalSec: number | null;
 }
 
+/**
+ * Weather provider contract. `WeatherService` depends on this, not on a concrete
+ * client, so a second source (METAR/buoys/another model API) can be swapped in
+ * behind the same interface. Payloads are canonical SI. `OpenMeteoClient` is the
+ * first implementation.
+ */
+export interface WeatherProvider {
+  fetchForecast(lat: number, lon: number): Promise<ForecastPayload>;
+  fetchMarine(lat: number, lon: number): Promise<MarinePayload>;
+  fetchModelMeta(model: string): Promise<ModelMeta>;
+}
+
 const FORECAST_HOURLY = [
   "wind_speed_10m",
   "wind_gusts_10m",
@@ -118,7 +130,7 @@ async function getJson(url: string): Promise<Json> {
  * Thin Open-Meteo client. Reads endpoints from config lazily (import-safe).
  * External HTTP → lives in packages/, not a domain repository.
  */
-export class OpenMeteoClient {
+export class OpenMeteoClient implements WeatherProvider {
   async fetchForecast(lat: number, lon: number): Promise<ForecastPayload> {
     const base = globalConfig.config.openMeteo.forecastUrl;
     const params = new URLSearchParams({
