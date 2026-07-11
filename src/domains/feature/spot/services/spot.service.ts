@@ -14,6 +14,7 @@ import type {
   SearchQuery,
   SuggestSpotInput,
 } from "../schemas";
+import { triggerSpotOsmIngest } from "../tasks/spot-osm-ingest.trigger";
 
 export interface SpotResponse {
   uid: string;
@@ -114,6 +115,12 @@ export class SpotService extends BaseUseCase {
   ): Promise<SpotResponse[]> {
     const rows = await this.spotRepository.listByStatus(status, limit);
     return rows.map(toSpotResponse);
+  }
+
+  /** Admin: enqueue an OSM ingest for a country → returns the Trigger run id. */
+  async requestOsmIngest(isoCountryCode: string): Promise<{ taskId: string }> {
+    const taskId = await triggerSpotOsmIngest(isoCountryCode);
+    return { taskId };
   }
 
   /** Admin moderation — publish/reject + curate spot intelligence. */

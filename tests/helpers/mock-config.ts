@@ -18,6 +18,9 @@ export function createMockConfig(overrides?: Partial<Config>): Config {
       secretKey: "test-trigger-secret",
       projectId: "proj_test",
     },
+    osm: {
+      overpassUrl: "https://overpass.test/api/interpreter",
+    },
     ...overrides,
   };
 }

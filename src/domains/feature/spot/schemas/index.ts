@@ -49,6 +49,19 @@ export const adminSpotQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
 });
 
+// Admin: enqueue an OSM ingest for a country (ISO 3166-1 alpha-2, e.g. "TR").
+export const ingestSpotsSchema = z.object({
+  isoCountryCode: z
+    .string()
+    .length(2)
+    .transform((s) => s.toUpperCase()),
+});
+
+export const ingestResponseSchema = z
+  .object({ taskId: z.string() })
+  .describe("The enqueued ingest task id")
+  .meta({ ref: "SpotIngestResponse" });
+
 // Admin moderation — publish/reject + curate fields.
 export const moderateSpotSchema = z.object({
   status: z.enum(spotStatusEnum.enumValues).optional(),

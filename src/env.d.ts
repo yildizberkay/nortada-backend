@@ -22,5 +22,8 @@ declare namespace NodeJS {
     TRIGGER_PROJECT_ID?: string;
     // Set to "true" inside the Trigger worker so infra can branch on it.
     TRIGGER_WORKER?: string;
+
+    // OpenStreetMap Overpass API endpoint (spot ingest — RFC-0004).
+    OSM_OVERPASS_URL?: string;
   }
 }

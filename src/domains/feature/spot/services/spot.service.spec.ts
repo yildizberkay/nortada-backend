@@ -3,7 +3,15 @@ import type { RequestUser } from "@/types";
 
 import { SpotReason } from "../errors";
 import type { SpotRepository } from "../repositories/spot.repository";
+import { triggerSpotOsmIngest } from "../tasks/spot-osm-ingest.trigger";
 import { SpotService } from "./spot.service";
+
+jest.mock("../tasks/spot-osm-ingest.trigger", () => ({
+  triggerSpotOsmIngest: jest.fn(),
+}));
+const mockTrigger = triggerSpotOsmIngest as jest.MockedFunction<
+  typeof triggerSpotOsmIngest
+>;
 
 const user: RequestUser = {
   id: 7,
@@ -124,6 +132,17 @@ describe("SpotService", () => {
           supportedSports: ["kitesurf"],
         }),
       );
+    });
+  });
+
+  describe("requestOsmIngest", () => {
+    it("enqueues the ingest task and returns its id", async () => {
+      mockTrigger.mockResolvedValue("run_abc");
+
+      const result = await service.requestOsmIngest("TR");
+
+      expect(mockTrigger).toHaveBeenCalledWith("TR");
+      expect(result).toEqual({ taskId: "run_abc" });
     });
   });
 

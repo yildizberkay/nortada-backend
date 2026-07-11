@@ -38,6 +38,12 @@ export interface Config {
     secretKey?: string;
     projectId?: string;
   };
+
+  // OpenStreetMap Overpass API — spot ingest source (RFC-0004). ODbL: attribute
+  // "© OpenStreetMap contributors" in any UI surfacing this data.
+  osm: {
+    overpassUrl: string;
+  };
 }
 
 // Whether we are running inside the Trigger.dev worker. Background tasks never
@@ -62,6 +68,9 @@ const envSchema = z
     CLERK_AUTHORIZED_PARTIES: z.string().optional(),
     TRIGGER_SECRET_KEY: z.string().optional(),
     TRIGGER_PROJECT_ID: z.string().optional(),
+    OSM_OVERPASS_URL: z
+      .string()
+      .default("https://overpass-api.de/api/interpreter"),
   })
   .superRefine((val, ctx) => {
     // In production a short/empty HS256 key signs forgeable device tokens.
@@ -118,6 +127,9 @@ export class GlobalConfig {
       trigger: {
         secretKey: env.TRIGGER_SECRET_KEY,
         projectId: env.TRIGGER_PROJECT_ID,
+      },
+      osm: {
+        overpassUrl: env.OSM_OVERPASS_URL,
       },
     };
   }

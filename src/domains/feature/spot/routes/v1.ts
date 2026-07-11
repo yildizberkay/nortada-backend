@@ -13,6 +13,8 @@ import {
   adminSpotQuerySchema,
   favoriteSpotSchema,
   favoriteUidParamSchema,
+  ingestResponseSchema,
+  ingestSpotsSchema,
   moderateSpotSchema,
   nearbyQuerySchema,
   nearbySpotResponseSchema,
@@ -112,6 +114,22 @@ adminSpotRoute.get(
     const { status, limit } = c.req.valid("query");
     const spots = await getContainer().spotService.listByStatus(status, limit);
     return c.json(HTTPResponse.success({ spots }));
+  },
+);
+
+adminSpotRoute.post(
+  "/ingest",
+  describeRoute({
+    operationId: "ingestSpots",
+    tags: ["admin"],
+    responses: jsonResponse(successResponseSchema(ingestResponseSchema)),
+  }),
+  zValidator("json", ingestSpotsSchema),
+  async (c) => {
+    const { isoCountryCode } = c.req.valid("json");
+    const result =
+      await getContainer().spotService.requestOsmIngest(isoCountryCode);
+    return c.json(HTTPResponse.success(result));
   },
 );
 
