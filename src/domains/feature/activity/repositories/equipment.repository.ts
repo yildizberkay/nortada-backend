@@ -1,0 +1,52 @@
+import { and, desc, eq } from "drizzle-orm";
+
+import type { DBManager, EquipmentProfile, NewEquipmentProfile } from "@/db";
+import type { DBExecutor } from "@/db/db.manager";
+import { equipmentProfileTable } from "@/db/schema";
+import { BaseRepository } from "@/domains/platform/foundation";
+
+export class EquipmentRepository extends BaseRepository {
+  constructor(externalDBManager?: DBManager) {
+    super(externalDBManager);
+  }
+
+  async create(values: NewEquipmentProfile): Promise<EquipmentProfile> {
+    const [row] = await this.dbClient
+      .insert(equipmentProfileTable)
+      .values(values)
+      .returning();
+    return row;
+  }
+
+  async listByUser(userId: number): Promise<EquipmentProfile[]> {
+    return this.dbClient
+      .select()
+      .from(equipmentProfileTable)
+      .where(eq(equipmentProfileTable.userId, userId))
+      .orderBy(desc(equipmentProfileTable.createdAt));
+  }
+
+  async findByUidForUser(
+    uid: string,
+    userId: number,
+  ): Promise<EquipmentProfile | undefined> {
+    return this.dbClient.query.equipmentProfile.findFirst({
+      where: and(
+        eq(equipmentProfileTable.uid, uid),
+        eq(equipmentProfileTable.userId, userId),
+      ),
+    });
+  }
+
+  /** Merge hook (D-008): move the user's equipment to the target account. */
+  async reassignOwner(
+    fromUserId: number,
+    toUserId: number,
+    tx: DBExecutor,
+  ): Promise<void> {
+    await tx
+      .update(equipmentProfileTable)
+      .set({ userId: toUserId })
+      .where(eq(equipmentProfileTable.userId, fromUserId));
+  }
+}

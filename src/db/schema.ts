@@ -175,6 +175,65 @@ export const spotStatusEnum = pgEnum("spot_status", [
 // ─── weather enums (RFC-0005) ────────────────────────────────────────────────
 export const weatherKindEnum = pgEnum("weather_kind", ["forecast", "marine"]);
 
+// ─── activity enums (RFC-0006) ───────────────────────────────────────────────
+export const activityStatusEnum = pgEnum("activity_status", [
+  "processing", // uploaded, metrics not yet computed
+  "ready", // metrics computed
+  "failed", // metric computation failed
+]);
+
+// Data source — future-proofed for Apple Watch from P0 (D: "source field ready").
+export const activitySourceEnum = pgEnum("activity_source", [
+  "iphone",
+  "watch",
+  "import",
+  "manual",
+]);
+
+// forecast (what the app showed) vs observed (real station/obs, later) — kept as
+// SEPARATE rows so forecast-vs-reality is possible.
+export const activityConditionKindEnum = pgEnum("activity_condition_kind", [
+  "forecast",
+  "observed",
+]);
+
+export const activityPrivacyEnum = pgEnum("activity_privacy", [
+  "private",
+  "followers",
+  "public",
+]);
+
+// P0 best-effort types: time windows + distance windows + the 5×10 rule. Alpha /
+// by-side / planing-only efforts are P1 (see activity-data-model.md §4).
+export const effortTypeEnum = pgEnum("effort_type", [
+  "time_2s",
+  "time_5s",
+  "time_10s",
+  "time_20s",
+  "time_30s",
+  "time_1m",
+  "time_5m",
+  "dist_100m",
+  "dist_250m",
+  "dist_500m",
+  "dist_1km",
+  "dist_nm",
+  "best_5x10",
+]);
+
+export const equipmentTypeEnum = pgEnum("equipment_type", [
+  "board",
+  "sail",
+  "wing",
+  "kite",
+  "foil",
+  "boat",
+  "sup",
+  "kayak",
+  "paddle",
+  "generic",
+]);
+
 // ─── auth (RFC-0002) ─────────────────────────────────────────────────────────
 // One row per identity. Anonymous devices and real Clerk logins live in the
 // same table so `c.var.user` is uniform. On login the anonymous row is either
@@ -410,6 +469,240 @@ export const weatherModelMetaTable = pgTable("weather_model_meta", {
 export type WeatherModelMeta = typeof weatherModelMetaTable.$inferSelect;
 export type NewWeatherModelMeta = typeof weatherModelMetaTable.$inferInsert;
 
+// ─── activity / session (RFC-0006) ───────────────────────────────────────────
+// 4-layer storage (activity-data-model.md): L0 raw is write-once immutable; L1
+// derived is recomputable + carries algorithm/version metadata; L3 context is
+// user-mutable. `spotUid` (text) references a watersport_spot loosely so the
+// activity domain stays decoupled from spot's internal ids. All values SI (D-006).
+
+// L0 — immutable identity + status + provenance + user context (L3 inline).
+export const activityTable = pgTable(
+  "activity",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => userTable.id),
+    sport: sportEnum("sport").notNull(),
+    customName: text("custom_name"),
+    status: activityStatusEnum("status").notNull().default("processing"),
+    source: activitySourceEnum("source").notNull().default("iphone"),
+    // Bumped when the raw track is (re)uploaded — L1 recompute keys off this.
+    dataVersion: integer("data_version").notNull().default(1),
+
+    // Time
+    startedAt: timestamp("started_at", {
+      precision: 3,
+      withTimezone: true,
+    }).notNull(),
+    endedAt: timestamp("ended_at", { precision: 3, withTimezone: true }),
+    timezone: text("timezone"),
+
+    // Location (denormalized spot ref + coarse geo)
+    spotUid: text("spot_uid"),
+    spotName: text("spot_name"),
+    startLat: doublePrecision("start_lat"),
+    startLon: doublePrecision("start_lon"),
+    endLat: doublePrecision("end_lat"),
+    endLon: doublePrecision("end_lon"),
+
+    // Provenance
+    device: text("device"),
+    deviceModel: text("device_model"),
+    osVersion: text("os_version"),
+    appVersion: text("app_version"),
+
+    // L3 context (user-mutable)
+    notes: text("notes"),
+    feeling: text("feeling"),
+    tags: text("tags").array(),
+    perceivedEffort: integer("perceived_effort"),
+    privacy: activityPrivacyEnum("privacy").notNull().default("private"),
+    hideStart: boolean("hide_start").notNull().default(false),
+    hiddenRadiusM: real("hidden_radius_m"),
+
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    index("activity_user_started_idx").on(t.userId, t.startedAt),
+    index("activity_user_sport_idx").on(t.userId, t.sport),
+  ],
+);
+export type Activity = typeof activityTable.$inferSelect;
+export type NewActivity = typeof activityTable.$inferInsert;
+
+// L0 — raw high-resolution GPS samples (immutable). One row per activity; samples
+// as jsonb (P0 <2MB — research/gps-tracking.md); move to object storage if larger.
+export const activityTrackTable = pgTable("activity_track", {
+  id: idColumn(),
+  uid: uidColumn(),
+  activityId: integer("activity_id")
+    .notNull()
+    .unique()
+    .references(() => activityTable.id, { onDelete: "cascade" }),
+  sampleCount: integer("sample_count").notNull(),
+  // Array of { t, lat, lon, groundSpeed?, hAccuracy?, ... } — canonical SI.
+  samples: jsonb("samples").$type<JsonValue>().notNull(),
+  createdAt: createdAtColumn(),
+});
+export type ActivityTrack = typeof activityTrackTable.$inferSelect;
+export type NewActivityTrack = typeof activityTrackTable.$inferInsert;
+
+// L0 — weather snapshot at record time (forecast now; observed later). Separate
+// rows per kind so forecast-vs-reality is possible.
+export const activityConditionTable = pgTable(
+  "activity_condition",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    activityId: integer("activity_id")
+      .notNull()
+      .references(() => activityTable.id, { onDelete: "cascade" }),
+    kind: activityConditionKindEnum("kind").notNull(),
+    provider: text("provider"),
+    windSpeedMs: real("wind_speed_ms"),
+    windGustsMs: real("wind_gusts_ms"),
+    windDirectionDeg: real("wind_direction_deg"),
+    temperatureC: real("temperature_c"),
+    weatherCode: integer("weather_code"),
+    capturedAt: timestamp("captured_at", {
+      precision: 3,
+      withTimezone: true,
+    }),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    uniqueIndex("activity_condition_activity_kind_key").on(
+      t.activityId,
+      t.kind,
+    ),
+  ],
+);
+export type ActivityCondition = typeof activityConditionTable.$inferSelect;
+export type NewActivityCondition = typeof activityConditionTable.$inferInsert;
+
+// L1 — core derived summary (one row per activity, recomputable).
+export const activitySummaryTable = pgTable("activity_summary", {
+  id: idColumn(),
+  uid: uidColumn(),
+  activityId: integer("activity_id")
+    .notNull()
+    .unique()
+    .references(() => activityTable.id, { onDelete: "cascade" }),
+  totalDistanceM: real("total_distance_m").notNull(),
+  maxSpeedMs: real("max_speed_ms").notNull(),
+  avgSpeedMs: real("avg_speed_ms").notNull(),
+  avgMovingSpeedMs: real("avg_moving_speed_ms").notNull(),
+  durationSec: real("duration_sec").notNull(),
+  movingDurationSec: real("moving_duration_sec").notNull(),
+  maxDistanceFromStartM: real("max_distance_from_start_m"),
+  validSampleCount: integer("valid_sample_count").notNull(),
+  gapCount: integer("gap_count").notNull().default(0),
+  // L1 analysis metadata.
+  algorithmVersion: integer("algorithm_version").notNull(),
+  inputDataVersion: integer("input_data_version").notNull(),
+  computedAt: timestamp("computed_at", {
+    precision: 3,
+    withTimezone: true,
+  }).notNull(),
+});
+export type ActivitySummary = typeof activitySummaryTable.$inferSelect;
+export type NewActivitySummary = typeof activitySummaryTable.$inferInsert;
+
+// L1 — render-friendly route (one row per activity).
+export const activityRouteTable = pgTable("activity_route", {
+  id: idColumn(),
+  uid: uidColumn(),
+  activityId: integer("activity_id")
+    .notNull()
+    .unique()
+    .references(() => activityTable.id, { onDelete: "cascade" }),
+  polyline: text("polyline").notNull(),
+  algorithmVersion: integer("algorithm_version").notNull(),
+  computedAt: timestamp("computed_at", {
+    precision: 3,
+    withTimezone: true,
+  }).notNull(),
+});
+export type ActivityRoute = typeof activityRouteTable.$inferSelect;
+export type NewActivityRoute = typeof activityRouteTable.$inferInsert;
+
+// L1 — best efforts (one row per effort; a table not jsonb so cross-session
+// records/insights can query it — RFC-0007).
+export const activityEffortTable = pgTable(
+  "activity_effort",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    activityId: integer("activity_id")
+      .notNull()
+      .references(() => activityTable.id, { onDelete: "cascade" }),
+    type: effortTypeEnum("type").notNull(),
+    // The effort result: average speed (m/s) over the window.
+    resultMs: real("result_ms").notNull(),
+    durationSec: real("duration_sec"),
+    distanceM: real("distance_m"),
+    // When in the session the effort occurred (seconds from start).
+    startOffsetSec: real("start_offset_sec"),
+    algorithmVersion: integer("algorithm_version").notNull(),
+    computedAt: timestamp("computed_at", {
+      precision: 3,
+      withTimezone: true,
+    }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("activity_effort_activity_type_key").on(t.activityId, t.type),
+  ],
+);
+export type ActivityEffort = typeof activityEffortTable.$inferSelect;
+export type NewActivityEffort = typeof activityEffortTable.$inferInsert;
+
+// Reusable equipment library (per user).
+export const equipmentProfileTable = pgTable("equipment_profile", {
+  id: idColumn(),
+  uid: uidColumn(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => userTable.id),
+  type: equipmentTypeEnum("type").notNull(),
+  name: text("name").notNull(),
+  // Type-specific attributes (volume/size/mast/boom/fin/frontWing…).
+  attributes: jsonb("attributes").$type<JsonValue>(),
+  createdAt: createdAtColumn(),
+  updatedAt: updatedAtColumn(),
+});
+export type EquipmentProfile = typeof equipmentProfileTable.$inferSelect;
+export type NewEquipmentProfile = typeof equipmentProfileTable.$inferInsert;
+
+// activity ↔ equipment, with a snapshot of the profile's values AT record time
+// (so editing the profile later never rewrites past sessions).
+export const activityEquipmentTable = pgTable(
+  "activity_equipment",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    activityId: integer("activity_id")
+      .notNull()
+      .references(() => activityTable.id, { onDelete: "cascade" }),
+    equipmentProfileId: integer("equipment_profile_id")
+      .notNull()
+      .references(() => equipmentProfileTable.id),
+    role: text("role"),
+    snapshot: jsonb("snapshot").$type<JsonValue>(),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    uniqueIndex("activity_equipment_activity_profile_key").on(
+      t.activityId,
+      t.equipmentProfileId,
+    ),
+  ],
+);
+export type ActivityEquipment = typeof activityEquipmentTable.$inferSelect;
+export type NewActivityEquipment = typeof activityEquipmentTable.$inferInsert;
+
 // ─── Schema registry ────────────────────────────────────────────────────────
 // Every domain appends its tables / enums / relations here. Drizzle's
 // `db.query.*` API is generated from this object.
@@ -421,4 +714,12 @@ export const dbSchema = {
   favorite: favoriteTable,
   weatherCache: weatherCacheTable,
   weatherModelMeta: weatherModelMetaTable,
+  activity: activityTable,
+  activityTrack: activityTrackTable,
+  activityCondition: activityConditionTable,
+  activitySummary: activitySummaryTable,
+  activityRoute: activityRouteTable,
+  activityEffort: activityEffortTable,
+  equipmentProfile: equipmentProfileTable,
+  activityEquipment: activityEquipmentTable,
 };

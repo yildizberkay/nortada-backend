@@ -1,6 +1,10 @@
 import type { Hono } from "hono";
 
 import {
+  activityRoute,
+  equipmentRoute,
+} from "@/domains/feature/activity/routes/v1";
+import {
   adminSpotRoute,
   favoriteRoute,
   spotRoute,
@@ -21,4 +25,6 @@ export const registerRoutes = (app: Hono<HonoContext>) => {
   app.route("/v1/spots", weatherRoute);
   app.route("/v1/admin/spots", adminSpotRoute);
   app.route("/v1/me/favorites", favoriteRoute);
+  app.route("/v1/activities", activityRoute);
+  app.route("/v1/equipment", equipmentRoute);
 };

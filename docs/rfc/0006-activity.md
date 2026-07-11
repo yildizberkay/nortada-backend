@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | 0006 |
 | **Başlık** | Aktivite/Seans (4 katman, GPS upload, kanonik metrik) |
-| **Status** | 🟡 Draft |
+| **Status** | 🚧 In Progress |
 | **Step** | 5 |
 | **Depends on** | RFC-0002 (user), RFC-0004 (spot), RFC-0005 (conditions) |
 | **Domain(ler)** | feature/session |

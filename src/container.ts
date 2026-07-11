@@ -1,4 +1,5 @@
 import { type DBManager, getDBManager } from "@/db/db.manager";
+import { createActivityModule } from "@/domains/feature/activity/activity.module";
 import { createSpotModule } from "@/domains/feature/spot/spot.module";
 import { createWeatherModule } from "@/domains/feature/weather/weather.module";
 import { createAuthModule } from "@/domains/platform/auth/auth.module";
@@ -37,9 +38,14 @@ export function buildContainer(db: DBManager) {
   const user = createUserModule(deps);
   const spot = createSpotModule(deps);
   const { favoriteReassigner, ...spotServices } = spot;
+  const { activityReassigner, ...activityServices } =
+    createActivityModule(deps);
+
+  // Auth is built after the data-owning domains so their merge hooks (D-008)
+  // can be threaded in explicitly.
   const auth = createAuthModule({
     ...deps,
-    mergeReassigners: [favoriteReassigner],
+    mergeReassigners: [favoriteReassigner, activityReassigner],
   });
   // Weather depends on spot (geo lookup + favorites hot set) — passed explicitly
   // as a minimal port (SpotService satisfies it).
@@ -53,6 +59,7 @@ export function buildContainer(db: DBManager) {
     ...user,
     ...spotServices,
     ...weather,
+    ...activityServices,
   };
 }
 
