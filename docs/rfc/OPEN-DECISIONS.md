@@ -41,14 +41,28 @@ Legend: ✅ decided · 🔨 decided, implementation pending · 🕒 deferred (re
   - **0006:** P1 analysis (maneuver / interval / alpha / timeline / L2 corrections);
     reconciliation cron for stuck `processing`; polyline LOD; privacy enforcement once sharing
     ships; `activity_equipment` onDelete.
-  - **0007 / 0008 / 0009:** whole phase deferred — design drafts done, implement when opened.
+
+## Deferred RFCs — build when we have data / reach the phase
+
+Berkay's decision (2026-07-12): **the system works without these; RFC-0001–0006 + auth token
+rotation is enough for now.** Their designs are fully written (English, detailed); implement each
+when we have the data / product inputs it needs. Not a code blocker — a scheduling choice.
+
+- 🕒 **RFC-0007 Insights** — build when we have real session data to aggregate and the final
+  metric/trend set from the app. Also needs sign-off on the computation approach (proposed:
+  O(1) update-hook + nightly recompute). Reads `activity_effort`/`activity_summary`.
+- 🕒 **RFC-0008 Condition Alerts** — blocked on **(g)** the free/premium tier model (alert limits)
+  and depends on RFC-0009's push infra. Build after monetization is decided.
+- 🕒 **RFC-0009 Subscriptions (RevenueCat) + Push (APNs)** — this *is* monetization: needs **(g)**
+  the free/premium model + **(h)** RevenueCat specifics. Deferred to "en son."
 
 ## Environment / validation (the real gating step, not a decision)
 
-Nothing has run against live infra this session (Docker/registry was blocked). To go from
-unit-tested code (142 passing) to a working backend, provision + integration-test:
+Nothing has run against live infra yet (Docker/registry was blocked when the code was written).
+To go from unit-tested code (**149 passing**) to a working backend, provision + integration-test:
 
-- **Railway Postgres** → set `DATABASE_URL`, apply the migration (`drizzle/0000_clean_azazel.sql`).
+- **Railway Postgres** → set `DATABASE_URL`, apply the migrations (`drizzle/0000_clean_azazel.sql`
+  + `drizzle/0001_fair_shiva.sql`).
 - **Cloudflare R2** bucket + keys → `OBJECT_STORAGE_*`.
 - **Clerk** keys (for real login) → `CLERK_*`.
 
