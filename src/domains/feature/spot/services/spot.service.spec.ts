@@ -2,6 +2,7 @@ import type { Spot } from "@/db";
 import type { RequestUser } from "@/types";
 
 import { SpotReason } from "../errors";
+import type { FavoriteRepository } from "../repositories/favorite.repository";
 import type { SpotRepository } from "../repositories/spot.repository";
 import { triggerSpotOsmIngest } from "../tasks/spot-osm-ingest.trigger";
 import { SpotService } from "./spot.service";
@@ -58,11 +59,15 @@ const mockRepo = {
   bulkInsertOsmPending: jest.fn(),
 } as unknown as jest.Mocked<SpotRepository>;
 
+const mockFavoriteRepo = {
+  listDistinctFavoritedSpotGeos: jest.fn(),
+} as unknown as jest.Mocked<FavoriteRepository>;
+
 describe("SpotService", () => {
   let service: SpotService;
 
   beforeEach(() => {
-    service = new SpotService(mockRepo);
+    service = new SpotService(mockRepo, mockFavoriteRepo);
   });
 
   describe("nearby", () => {
@@ -159,6 +164,37 @@ describe("SpotService", () => {
           supportedSports: ["kitesurf"],
         }),
       );
+    });
+  });
+
+  describe("getGeoByUid", () => {
+    it("returns geo for a published spot", async () => {
+      mockRepo.findByUid.mockResolvedValue(spotRow());
+      const geo = await service.getGeoByUid("spot-1");
+      expect(geo).toEqual({
+        uid: "spot-1",
+        latitude: 38.27,
+        longitude: 26.37,
+        shoreBearingDeg: 200,
+        supportedSports: ["windsurf", "wingfoil"],
+      });
+    });
+
+    it("throws NOT_FOUND for a non-published spot", async () => {
+      mockRepo.findByUid.mockResolvedValue(spotRow({ status: "pending" }));
+      await expect(service.getGeoByUid("spot-1")).rejects.toMatchObject({
+        errorCode: "NOT_FOUND",
+      });
+    });
+  });
+
+  describe("listHotSpotGeos", () => {
+    it("delegates to the favorite repo", async () => {
+      const geos = [{ uid: "spot-1" }];
+      mockFavoriteRepo.listDistinctFavoritedSpotGeos.mockResolvedValue(
+        geos as never,
+      );
+      expect(await service.listHotSpotGeos()).toBe(geos);
     });
   });
 

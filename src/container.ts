@@ -1,5 +1,6 @@
 import { type DBManager, getDBManager } from "@/db/db.manager";
 import { createSpotModule } from "@/domains/feature/spot/spot.module";
+import { createWeatherModule } from "@/domains/feature/weather/weather.module";
 import { createAuthModule } from "@/domains/platform/auth/auth.module";
 import { createUserModule } from "@/domains/platform/user/user.module";
 
@@ -40,11 +41,17 @@ export function buildContainer(db: DBManager) {
     ...deps,
     mergeReassigners: [favoriteReassigner],
   });
+  // Weather depends on spot (geo lookup + favorites hot set) — passed explicitly.
+  const weather = createWeatherModule({
+    ...deps,
+    spotService: spotServices.spotService,
+  });
 
   return {
     ...auth,
     ...user,
     ...spotServices,
+    ...weather,
   };
 }
 

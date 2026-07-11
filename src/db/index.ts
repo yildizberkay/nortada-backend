@@ -13,8 +13,12 @@ export type {
   NewUser,
   NewUserProfile,
   NewUserSportProfile,
+  NewWeatherCache,
+  NewWeatherModelMeta,
   Spot,
   User,
   UserProfile,
   UserSportProfile,
+  WeatherCache,
+  WeatherModelMeta,
 } from "./schema";

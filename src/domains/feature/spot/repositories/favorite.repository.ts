@@ -5,9 +5,29 @@ import type { DBExecutor } from "@/db/db.manager";
 import { favoriteTable, spotTable } from "@/db/schema";
 import { BaseRepository } from "@/domains/platform/foundation";
 
+import type { SpotGeo } from "../types";
+
 export class FavoriteRepository extends BaseRepository {
   constructor(externalDBManager?: DBManager) {
     super(externalDBManager);
+  }
+
+  /**
+   * Distinct PUBLISHED spots favorited by anyone — the weather hot set (D-004).
+   * A spot favorited by many users appears once.
+   */
+  async listDistinctFavoritedSpotGeos(): Promise<SpotGeo[]> {
+    return this.dbClient
+      .selectDistinct({
+        uid: spotTable.uid,
+        latitude: spotTable.latitude,
+        longitude: spotTable.longitude,
+        shoreBearingDeg: spotTable.shoreBearingDeg,
+        supportedSports: spotTable.supportedSports,
+      })
+      .from(favoriteTable)
+      .innerJoin(spotTable, eq(favoriteTable.spotId, spotTable.id))
+      .where(eq(spotTable.status, "published"));
   }
 
   /** The user's favorited spots, most-recently-favorited first. */

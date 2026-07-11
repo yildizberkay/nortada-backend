@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | 0005 |
 | **Başlık** | Hava (Open-Meteo, decision/best-window, talep-güdümlü cache) |
-| **Status** | 🟡 Draft |
+| **Status** | 🚧 In Progress |
 | **Step** | 4 |
 | **Depends on** | RFC-0004 (spot), RFC-0003 (favoriler → sıcak set) |
 | **Domain(ler)** | feature/weather |

@@ -4,6 +4,7 @@ import { GenericError } from "@/packages/error";
 import type { RequestUser } from "@/types";
 
 import { SpotReason } from "../errors";
+import type { FavoriteRepository } from "../repositories/favorite.repository";
 import type {
   SpotRepository,
   SpotWithDistance,
@@ -15,6 +16,7 @@ import type {
   SuggestSpotInput,
 } from "../schemas";
 import { triggerSpotOsmIngest } from "../tasks/spot-osm-ingest.trigger";
+import type { SpotGeo } from "../types";
 
 export interface SpotResponse {
   uid: string;
@@ -53,8 +55,34 @@ export const toSpotResponse = (spot: Spot): SpotResponse => ({
 });
 
 export class SpotService extends BaseUseCase {
-  constructor(private readonly spotRepository: SpotRepository) {
+  constructor(
+    private readonly spotRepository: SpotRepository,
+    private readonly favoriteRepository: FavoriteRepository,
+  ) {
     super();
+  }
+
+  /** Published spot's geo for the weather domain (published-only). */
+  async getGeoByUid(uid: string): Promise<SpotGeo> {
+    const spot = await this.spotRepository.findByUid(uid);
+    if (spot?.status !== "published") {
+      throw new GenericError("NOT_FOUND", {
+        reason: SpotReason.NOT_FOUND,
+        message: "Spot not found",
+      });
+    }
+    return {
+      uid: spot.uid,
+      latitude: spot.latitude,
+      longitude: spot.longitude,
+      shoreBearingDeg: spot.shoreBearingDeg,
+      supportedSports: spot.supportedSports,
+    };
+  }
+
+  /** The weather hot set (D-004): distinct favorited published spots. */
+  async listHotSpotGeos(): Promise<SpotGeo[]> {
+    return this.favoriteRepository.listDistinctFavoritedSpotGeos();
   }
 
   async nearby(

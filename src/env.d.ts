@@ -25,5 +25,9 @@ declare namespace NodeJS {
 
     // OpenStreetMap Overpass API endpoint (spot ingest — RFC-0004).
     OSM_OVERPASS_URL?: string;
+
+    // Open-Meteo endpoints (weather — RFC-0005).
+    OPEN_METEO_BASE_URL?: string;
+    OPEN_METEO_MARINE_URL?: string;
   }
 }

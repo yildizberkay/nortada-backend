@@ -44,6 +44,13 @@ export interface Config {
   osm: {
     overpassUrl: string;
   };
+
+  // Open-Meteo — weather source (RFC-0005). No API key for non-commercial use;
+  // attribute "Weather data by Open-Meteo.com".
+  openMeteo: {
+    forecastUrl: string;
+    marineUrl: string;
+  };
 }
 
 // Whether we are running inside the Trigger.dev worker. Background tasks never
@@ -71,6 +78,10 @@ const envSchema = z
     OSM_OVERPASS_URL: z
       .string()
       .default("https://overpass-api.de/api/interpreter"),
+    OPEN_METEO_BASE_URL: z.string().default("https://api.open-meteo.com/v1"),
+    OPEN_METEO_MARINE_URL: z
+      .string()
+      .default("https://marine-api.open-meteo.com/v1"),
   })
   .superRefine((val, ctx) => {
     // In production a short/empty HS256 key signs forgeable device tokens.
@@ -130,6 +141,10 @@ export class GlobalConfig {
       },
       osm: {
         overpassUrl: env.OSM_OVERPASS_URL,
+      },
+      openMeteo: {
+        forecastUrl: env.OPEN_METEO_BASE_URL,
+        marineUrl: env.OPEN_METEO_MARINE_URL,
       },
     };
   }

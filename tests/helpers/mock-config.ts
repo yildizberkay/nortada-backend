@@ -21,6 +21,10 @@ export function createMockConfig(overrides?: Partial<Config>): Config {
     osm: {
       overpassUrl: "https://overpass.test/api/interpreter",
     },
+    openMeteo: {
+      forecastUrl: "https://open-meteo.test/v1",
+      marineUrl: "https://marine.open-meteo.test/v1",
+    },
     ...overrides,
   };
 }

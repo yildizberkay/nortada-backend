@@ -172,6 +172,9 @@ export const spotStatusEnum = pgEnum("spot_status", [
   "rejected",
 ]);
 
+// ─── weather enums (RFC-0005) ────────────────────────────────────────────────
+export const weatherKindEnum = pgEnum("weather_kind", ["forecast", "marine"]);
+
 // ─── auth (RFC-0002) ─────────────────────────────────────────────────────────
 // One row per identity. Anonymous devices and real Clerk logins live in the
 // same table so `c.var.user` is uniform. On login the anonymous row is either
@@ -349,6 +352,63 @@ export const favoriteTable = pgTable(
 export type Favorite = typeof favoriteTable.$inferSelect;
 export type NewFavorite = typeof favoriteTable.$inferInsert;
 
+// ─── weather (RFC-0005) ──────────────────────────────────────────────────────
+// Demand-driven cache (D-004): a spot's weather is fetched on first request and
+// re-fetched for the hot set (favorites) by a cron — never the whole world.
+// Keyed by spot UID (text) rather than the internal id so the weather domain
+// stays decoupled from spot's internal ids. Payload is canonical SI (D-006).
+export const weatherCacheTable = pgTable(
+  "weather_cache",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    spotUid: text("spot_uid").notNull(),
+    kind: weatherKindEnum("kind").notNull(),
+    fetchedAt: timestamp("fetched_at", {
+      precision: 3,
+      withTimezone: true,
+    }).notNull(),
+    // The model run this payload came from (freshness/stale logic).
+    modelRun: timestamp("model_run", { precision: 3, withTimezone: true }),
+    payload: jsonb("payload").$type<JsonValue>().notNull(),
+    expiresAt: timestamp("expires_at", {
+      precision: 3,
+      withTimezone: true,
+    }).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    uniqueIndex("weather_cache_spot_kind_key").on(t.spotUid, t.kind),
+    index("weather_cache_expires_at_idx").on(t.expiresAt),
+  ],
+);
+
+export type WeatherCache = typeof weatherCacheTable.$inferSelect;
+export type NewWeatherCache = typeof weatherCacheTable.$inferInsert;
+
+// Global model-run metadata (one row per model) — the "updated Xm ago / stale"
+// story. Refreshed periodically, shared across all spots.
+export const weatherModelMetaTable = pgTable("weather_model_meta", {
+  id: idColumn(),
+  uid: uidColumn(),
+  model: text("model").notNull().unique(),
+  lastRunAvailabilityTime: timestamp("last_run_availability_time", {
+    precision: 3,
+    withTimezone: true,
+  }),
+  updateIntervalSec: integer("update_interval_sec"),
+  fetchedAt: timestamp("fetched_at", {
+    precision: 3,
+    withTimezone: true,
+  }).notNull(),
+  createdAt: createdAtColumn(),
+  updatedAt: updatedAtColumn(),
+});
+
+export type WeatherModelMeta = typeof weatherModelMetaTable.$inferSelect;
+export type NewWeatherModelMeta = typeof weatherModelMetaTable.$inferInsert;
+
 // ─── Schema registry ────────────────────────────────────────────────────────
 // Every domain appends its tables / enums / relations here. Drizzle's
 // `db.query.*` API is generated from this object.
@@ -358,4 +418,6 @@ export const dbSchema = {
   userSportProfile: userSportProfileTable,
   spot: spotTable,
   favorite: favoriteTable,
+  weatherCache: weatherCacheTable,
+  weatherModelMeta: weatherModelMetaTable,
 };

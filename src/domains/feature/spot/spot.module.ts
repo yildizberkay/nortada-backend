@@ -13,7 +13,7 @@ export function createSpotModule({ db }: ModuleDeps) {
   const favoriteRepository = new FavoriteRepository(db);
   const overpassClient = new OverpassClient();
 
-  const spotService = new SpotService(spotRepository);
+  const spotService = new SpotService(spotRepository, favoriteRepository);
   const favoriteService = new FavoriteService(
     favoriteRepository,
     spotRepository,
