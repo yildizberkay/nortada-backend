@@ -4,6 +4,7 @@ import { gunzip } from "node:zlib";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { describeRoute, resolver, validator as zValidator } from "hono-openapi";
+import { z } from "zod";
 
 import { getContainer } from "@/container";
 import { authenticate } from "@/middlewares/authenticate.middleware";
@@ -101,6 +102,27 @@ activityRoute.post(
   describeRoute({
     operationId: "uploadActivity",
     tags: ["activity"],
+    // Documented explicitly — the body is validated by readGzipBody (not
+    // zValidator), so without this the OpenAPI spec (and every generated
+    // client) had NO request body for the upload endpoint.
+    requestBody: {
+      required: true,
+      description:
+        "Activity payload; large GPS tracks may be gzip-compressed (Content-Encoding: gzip)",
+      content: {
+        "application/json": {
+          // resolver() instances are only resolved inside `responses`;
+          // requestBody must carry a plain JSON schema, so convert eagerly
+          // (input shape: optionals/defaults as the CLIENT sends them).
+          // draft-2020-12 = OpenAPI 3.1's native dialect (the served spec is
+          // 3.1) — the 3.0 target's `nullable:` keyword is a no-op there.
+          schema: z.toJSONSchema(createActivitySchema, {
+            io: "input",
+            target: "draft-2020-12",
+          }) as never,
+        },
+      },
+    },
     responses: jsonResponse(
       successResponseSchema(createActivityResponseSchema),
     ),
