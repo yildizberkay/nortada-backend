@@ -53,25 +53,32 @@ const decisionReason = z.enum([
 ]);
 
 // The compact spot slice the Today screen renders — not the full SpotResponse
-// (no curation/status fields across this boundary).
-const briefingSpotSchema = z.object({
-  uid: z.string(),
-  name: z.string(),
-  locality: z.string().nullable(),
-  region: z.string().nullable(),
-  country: z.string().nullable(),
-  latitude: z.number(),
-  longitude: z.number(),
-  waterType: z.enum(waterTypeEnum.enumValues).nullable(),
-  supportedSports: z.array(sport),
-  shoreBearingDeg: z.number().nullable(),
-  distanceKm: z.number().nullable(),
-});
+// (no curation/status fields across this boundary). Named refs so generated
+// clients get ONE reusable type for the pick and every alternative.
+const briefingSpotSchema = z
+  .object({
+    uid: z.string(),
+    name: z.string(),
+    locality: z.string().nullable(),
+    region: z.string().nullable(),
+    country: z.string().nullable(),
+    latitude: z.number(),
+    longitude: z.number(),
+    waterType: z.enum(waterTypeEnum.enumValues).nullable(),
+    supportedSports: z.array(sport),
+    shoreBearingDeg: z.number().nullable(),
+    distanceKm: z.number().nullable(),
+  })
+  .describe("The compact spot slice the briefing renders")
+  .meta({ ref: "BriefingSpot" });
 
-const briefingCandidateSchema = z.object({
-  spot: briefingSpotSchema,
-  conditions: conditionsResponseSchema,
-});
+const briefingCandidateSchema = z
+  .object({
+    spot: briefingSpotSchema,
+    conditions: conditionsResponseSchema,
+  })
+  .describe("A briefed spot with its now-cast conditions")
+  .meta({ ref: "BriefingCandidate" });
 
 export const briefingResponseSchema = z
   .object({
