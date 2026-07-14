@@ -18,16 +18,22 @@ const geo: SpotGeo = {
 };
 
 const forecastPayload = (currentWind: number): ForecastPayload => ({
+  utcOffsetSeconds: 10_800, // UTC+3 — the Aegean beachhead
   current: {
-    time: "2026-07-11T12:00",
+    time: "2026-07-11T12:00:00Z",
     windSpeedMs: currentWind,
     windGustsMs: currentWind + 2,
     windDirectionDeg: 270,
     weatherCode: 0,
     temperatureC: 24,
   },
+  daily: {
+    date: ["2026-07-11"],
+    sunrise: ["2026-07-11T02:47:00Z"],
+    sunset: ["2026-07-11T17:39:00Z"],
+  },
   hourly: {
-    time: ["2026-07-11T12:00", "2026-07-11T13:00"],
+    time: ["2026-07-11T12:00:00Z", "2026-07-11T13:00:00Z"],
     windSpeedMs: [currentWind, currentWind],
     windGustsMs: [currentWind + 2, currentWind + 2],
     windDirectionDeg: [270, 270],
@@ -145,6 +151,92 @@ describe("WeatherService", () => {
 
       expect(result.freshness.stale).toBe(true);
       expect(result.decision).toBe("go");
+    });
+  });
+
+  describe("getForecast", () => {
+    it("rolls hourly up into enriched local-day dailies", async () => {
+      mockRepo.findCache.mockResolvedValue(undefined as never);
+      const payload = forecastPayload(10);
+      // Two hours straddling UTC midnight: at UTC+3 BOTH land on July 12 local.
+      payload.hourly.time = ["2026-07-11T22:00:00Z", "2026-07-11T23:00:00Z"];
+      payload.hourly.windSpeedMs = [7, 10];
+      payload.hourly.windGustsMs = [9, 13];
+      payload.hourly.windDirectionDeg = [350, 10];
+      payload.daily = {
+        date: ["2026-07-12"],
+        sunrise: ["2026-07-12T02:48:00Z"],
+        sunset: ["2026-07-12T17:38:00Z"],
+      };
+      mockClient.fetchForecast.mockResolvedValue(payload);
+
+      const result = await service.getForecast("spot-1", {});
+
+      expect(result.utcOffsetSeconds).toBe(10_800);
+      expect(result.daily).toHaveLength(1);
+      const day = result.daily[0];
+      expect(day.date).toBe("2026-07-12"); // local day, not the UTC 07-11
+      expect(day.minWindMs).toBe(7);
+      expect(day.maxWindMs).toBe(10);
+      expect(day.maxGustMs).toBe(13);
+      // Circular mean of 350° and 10° is ~0°, never the arithmetic 180°.
+      expect(
+        Math.min(day.dominantDirectionDeg, 360 - day.dominantDirectionDeg),
+      ).toBeLessThanOrEqual(4);
+      expect(day.decision).toBe("go"); // 10 m/s windsurf hour
+      expect(day.confidence).toBe("high");
+      expect(day.bestWindow).toEqual({
+        start: "2026-07-11T22:00:00Z",
+        end: "2026-07-11T23:00:00Z",
+        peakWindMs: 10,
+      });
+      expect(day.sunrise).toBe("2026-07-12T02:48:00Z");
+      expect(day.sunset).toBe("2026-07-12T17:38:00Z");
+    });
+
+    it("refetches when the cached payload predates the daily fields", async () => {
+      const {
+        daily: _daily,
+        utcOffsetSeconds: _off,
+        ...legacy
+      } = forecastPayload(10);
+      const cached: WeatherCache = {
+        id: 1,
+        uid: "wc",
+        spotUid: "spot-1",
+        kind: "forecast",
+        fetchedAt: new Date(),
+        modelRun: null,
+        payload: legacy as never,
+        expiresAt: new Date(Date.now() + 60_000), // NOT expired — shape is
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      mockRepo.findCache.mockImplementation(async (_uid, kind) =>
+        kind === "forecast" ? cached : (undefined as never),
+      );
+
+      const result = await service.getForecast("spot-1", {});
+
+      expect(mockClient.fetchForecast).toHaveBeenCalled();
+      expect(result.utcOffsetSeconds).toBe(10_800);
+    });
+  });
+
+  describe("getConditionsBatch", () => {
+    it("returns conditions per spot and omits failures", async () => {
+      mockRepo.findCache.mockResolvedValue(undefined as never);
+      mockSpotService.getGeoByUid.mockImplementation(async (uid) => {
+        if (uid === "spot-missing") throw new Error("not found");
+        return { ...geo, uid };
+      });
+
+      const result = await service.getConditionsBatch(
+        ["spot-1", "spot-missing", "spot-2", "spot-1"],
+        {},
+      );
+
+      expect(result.spots.map((s) => s.spotUid)).toEqual(["spot-1", "spot-2"]);
     });
   });
 

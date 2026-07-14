@@ -12,10 +12,13 @@ import {
 } from "@/packages/open-meteo";
 
 import {
+  type BestWindow,
   bestWindow,
+  type Confidence,
   computeConfidence,
   computeDecision,
   type Decision,
+  type HourlySeries,
 } from "../decision";
 import { WeatherReason } from "../errors";
 import type { WeatherRepository } from "../repositories/weather.repository";
@@ -25,6 +28,8 @@ type Sport = SpotGeo["supportedSports"][number];
 
 const FORECAST_TTL_MS = 60 * 60 * 1000; // 1h — the "now" tick wants freshness
 const MARINE_TTL_MS = 3 * 60 * 60 * 1000; // 3h — waves move slower
+// Cold-cache batch items each hit Open-Meteo — keep the fan-out polite.
+const BATCH_CONCURRENCY = 6;
 
 const log = createLogger("WeatherService");
 
@@ -33,6 +38,21 @@ interface Fetched<T> {
   fetchedAt: Date;
   modelRun: Date | null;
   stale: boolean;
+}
+
+/** One row of the daily strip — a spot-LOCAL calendar day rolled up from the
+ * hourly series, sized for the client's 10-day outlook UI. */
+interface ForecastDay {
+  date: string;
+  minWindMs: number;
+  maxWindMs: number;
+  maxGustMs: number;
+  dominantDirectionDeg: number;
+  decision: Decision;
+  confidence: Confidence;
+  bestWindow: BestWindow | null;
+  sunrise: string | null;
+  sunset: string | null;
 }
 
 /**
@@ -91,6 +111,7 @@ export class WeatherService extends BaseUseCase {
     return {
       spotUid,
       sport,
+      utcOffsetSeconds: forecast.utcOffsetSeconds,
       current: { ...current, windSide: side },
       decision,
       confidence,
@@ -104,6 +125,32 @@ export class WeatherService extends BaseUseCase {
         : null,
       freshness: this.freshness(fc, await this.modelMeta()),
     };
+  }
+
+  /** Conditions for many spots at once — the map viewport shows a dozen
+   * markers and must not pay a round-trip per marker. Spots that fail
+   * (unknown uid, unsupported sport, provider error) are omitted rather than
+   * failing the batch. */
+  async getConditionsBatch(uids: string[], query: WeatherQuery) {
+    const unique = [...new Set(uids)];
+    const spots: Awaited<ReturnType<WeatherService["getConditions"]>>[] = [];
+    for (let i = 0; i < unique.length; i += BATCH_CONCURRENCY) {
+      const chunk = unique.slice(i, i + BATCH_CONCURRENCY);
+      const results = await Promise.allSettled(
+        chunk.map((uid) => this.getConditions(uid, query)),
+      );
+      for (const [j, result] of results.entries()) {
+        if (result.status === "fulfilled") {
+          spots.push(result.value);
+        } else {
+          log.warn("Batch conditions failed for spot", {
+            spotUid: chunk[j],
+            error: String(result.reason),
+          });
+        }
+      }
+    }
+    return { spots };
   }
 
   async getForecast(spotUid: string, query: WeatherQuery) {
@@ -130,12 +177,19 @@ export class WeatherService extends BaseUseCase {
       }),
     }));
 
+    const freshness = this.freshness(fc, await this.modelMeta());
     return {
       spotUid,
       sport,
+      utcOffsetSeconds: fc.payload.utcOffsetSeconds,
       hourly,
-      daily: this.deriveDaily(fc.payload, sport, spot.shoreBearingDeg),
-      freshness: this.freshness(fc, await this.modelMeta()),
+      daily: this.deriveDaily(
+        fc.payload,
+        sport,
+        spot.shoreBearingDeg,
+        freshness.stale,
+      ),
+      freshness,
     };
   }
 
@@ -214,10 +268,23 @@ export class WeatherService extends BaseUseCase {
     };
   }
 
+  /** Cached rows written before the daily/utcOffsetSeconds fields existed
+   * can't serve the current contract — treat them as absent so they refetch. */
+  private isCurrentForecastShape(payload: unknown): boolean {
+    return (
+      typeof payload === "object" &&
+      payload !== null &&
+      "daily" in payload &&
+      "utcOffsetSeconds" in payload
+    );
+  }
+
   private async getOrFetchForecast(
     spot: SpotGeo,
   ): Promise<Fetched<ForecastPayload>> {
-    const cached = await this.weatherRepository.findCache(spot.uid, "forecast");
+    const found = await this.weatherRepository.findCache(spot.uid, "forecast");
+    const cached =
+      found && this.isCurrentForecastShape(found.payload) ? found : undefined;
     const now = new Date();
     if (cached && cached.expiresAt > now) {
       return {
@@ -304,39 +371,107 @@ export class WeatherService extends BaseUseCase {
     forecast: ForecastPayload,
     sport: Sport,
     shoreBearingDeg: number | null,
-  ): Array<{ date: string; maxWindMs: number; decision: Decision }> {
+    stale: boolean,
+  ): ForecastDay[] {
     const h = forecast.hourly;
-    const byDate = new Map<
-      string,
-      { maxWindMs: number; decisions: Decision[] }
-    >();
+    const offsetMs = forecast.utcOffsetSeconds * 1000;
 
+    // Group hour indices by the spot's LOCAL calendar day — that is the day
+    // the client's outlook strip renders (a 21:00 local go-window must not
+    // leak into the next day just because it crossed UTC midnight).
+    const byDate = new Map<string, number[]>();
     for (let i = 0; i < h.time.length; i++) {
-      const date = h.time[i].slice(0, 10);
-      const entry = byDate.get(date) ?? { maxWindMs: 0, decisions: [] };
-      entry.maxWindMs = Math.max(entry.maxWindMs, h.windSpeedMs[i] ?? 0);
-      entry.decisions.push(
-        computeDecision({
+      const date = new Date(Date.parse(h.time[i]) + offsetMs)
+        .toISOString()
+        .slice(0, 10);
+      const indices = byDate.get(date) ?? [];
+      indices.push(i);
+      byDate.set(date, indices);
+    }
+
+    const sun = new Map(
+      forecast.daily.date.map((date, i) => [
+        date,
+        {
+          sunrise: forecast.daily.sunrise[i] || null,
+          sunset: forecast.daily.sunset[i] || null,
+        },
+      ]),
+    );
+
+    const rank: Record<Decision, number> = { go: 0, watch: 1, skip: 2 };
+    return [...byDate.entries()].map(([date, indices]) => {
+      let minWindMs = Number.POSITIVE_INFINITY;
+      let maxWindMs = 0;
+      let maxGustMs = 0;
+      let maxGustSpreadMs = 0;
+      let maxPrecipitationProbability = 0;
+      // Speed-weighted circular mean — a plain average of degrees breaks at
+      // the 350°/10° wrap.
+      let east = 0;
+      let north = 0;
+      let decision: Decision = "skip";
+
+      for (const i of indices) {
+        const windMs = h.windSpeedMs[i] ?? 0;
+        const gustMs = h.windGustsMs[i] ?? 0;
+        minWindMs = Math.min(minWindMs, windMs);
+        maxWindMs = Math.max(maxWindMs, windMs);
+        maxGustMs = Math.max(maxGustMs, gustMs);
+        maxGustSpreadMs = Math.max(maxGustSpreadMs, gustMs - windMs);
+        maxPrecipitationProbability = Math.max(
+          maxPrecipitationProbability,
+          h.precipitationProbability[i] ?? 0,
+        );
+        const rad = ((h.windDirectionDeg[i] ?? 0) * Math.PI) / 180;
+        east += windMs * Math.sin(rad);
+        north += windMs * Math.cos(rad);
+        // The day's headline = its BEST hour (least-severe decision).
+        const hourDecision = computeDecision({
           sport,
-          windMs: h.windSpeedMs[i] ?? 0,
-          gustMs: h.windGustsMs[i] ?? 0,
+          windMs,
+          gustMs,
           weatherCode: h.weatherCode[i] ?? 0,
           capeJkg: h.capeJkg[i],
           windDirectionDeg: h.windDirectionDeg[i],
           shoreBearingDeg,
-        }),
-      );
-      byDate.set(date, entry);
-    }
+        });
+        if (rank[hourDecision] < rank[decision]) decision = hourDecision;
+      }
 
-    // The day's headline = its BEST hour (least-severe decision).
-    const rank: Record<Decision, number> = { go: 0, watch: 1, skip: 2 };
-    return [...byDate.entries()].map(([date, e]) => ({
-      date,
-      maxWindMs: e.maxWindMs,
-      decision: e.decisions.reduce((best, d) =>
-        rank[d] < rank[best] ? d : best,
-      ),
-    }));
+      const daySeries: HourlySeries = {
+        time: indices.map((i) => h.time[i]),
+        windSpeedMs: indices.map((i) => h.windSpeedMs[i] ?? 0),
+        windGustsMs: indices.map((i) => h.windGustsMs[i] ?? 0),
+        windDirectionDeg: indices.map((i) => h.windDirectionDeg[i] ?? 0),
+        weatherCode: indices.map((i) => h.weatherCode[i] ?? 0),
+        capeJkg: indices.map((i) => h.capeJkg[i] ?? 0),
+      };
+
+      return {
+        date,
+        minWindMs: Number.isFinite(minWindMs) ? minWindMs : 0,
+        maxWindMs,
+        maxGustMs,
+        dominantDirectionDeg:
+          east || north
+            ? Math.round((Math.atan2(east, north) * 180) / Math.PI + 360) % 360
+            : 0,
+        decision,
+        confidence: computeConfidence({
+          stale,
+          gustSpreadMs: maxGustSpreadMs,
+          precipitationProbability: maxPrecipitationProbability,
+        }),
+        bestWindow: bestWindow(
+          daySeries,
+          sport,
+          shoreBearingDeg,
+          indices.length,
+        ),
+        sunrise: sun.get(date)?.sunrise ?? null,
+        sunset: sun.get(date)?.sunset ?? null,
+      };
+    });
   }
 }

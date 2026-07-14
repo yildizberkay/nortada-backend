@@ -5,7 +5,11 @@ import { createLogger } from "@/packages/logger";
 const logger = createLogger("open-meteo");
 
 // Canonical SI values (D-006). The request pins wind_speed_unit=ms /
-// temperature_unit=celsius / timezone=UTC, so the response is already SI.
+// temperature_unit=celsius, so the response is already SI. Times are requested
+// as unixtime with timezone=auto — epochs are timezone-independent (we emit
+// them as canonical UTC ISO strings) while `utc_offset_seconds` still tells the
+// client the spot's local offset, and the daily block splits on LOCAL days
+// (sunrise/sunset belong to the spot's calendar day, not the UTC one).
 
 export interface ForecastCurrent {
   time: string;
@@ -30,9 +34,20 @@ export interface ForecastHourly {
   cloudCover: number[];
 }
 
+export interface ForecastDaily {
+  /** Spot-local calendar dates (YYYY-MM-DD). */
+  date: string[];
+  /** ISO-8601 UTC. */
+  sunrise: string[];
+  sunset: string[];
+}
+
 export interface ForecastPayload {
+  /** The spot's local UTC offset — clients shift the UTC times for display. */
+  utcOffsetSeconds: number;
   current: ForecastCurrent;
   hourly: ForecastHourly;
+  daily: ForecastDaily;
 }
 
 export interface MarineHourly {
@@ -92,6 +107,8 @@ const FORECAST_CURRENT = [
 // ICON global+EU stitched — solid for the Aegean beachhead. See otonom-kararlar.
 export const FORECAST_MODEL = "icon_seamless";
 
+const FORECAST_DAILY = ["sunrise", "sunset"].join(",");
+
 const MARINE_HOURLY = [
   "wave_height",
   "wave_period",
@@ -106,6 +123,19 @@ type Json = any;
 const nums = (v: unknown): number[] =>
   Array.isArray(v) ? v.map((x) => (typeof x === "number" ? x : Number(x))) : [];
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
+
+// Unixtime seconds → canonical UTC ISO ("2026-07-14T16:00:00Z").
+const isoUtc = (sec: unknown): string =>
+  typeof sec === "number"
+    ? `${new Date(sec * 1000).toISOString().slice(0, 19)}Z`
+    : "";
+const isoUtcAll = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map(isoUtc) : [];
+// Local-midnight epoch + offset → the LOCAL calendar date it labels.
+const localDate = (sec: unknown, offsetSec: number): string =>
+  typeof sec === "number"
+    ? new Date((sec + offsetSec) * 1000).toISOString().slice(0, 10)
+    : "";
 
 async function getJson(url: string): Promise<Json> {
   let response: Response;
@@ -138,28 +168,42 @@ export class OpenMeteoClient implements WeatherProvider {
       longitude: String(lon),
       hourly: FORECAST_HOURLY,
       current: FORECAST_CURRENT,
+      daily: FORECAST_DAILY,
       models: FORECAST_MODEL,
       wind_speed_unit: "ms",
       temperature_unit: "celsius",
       precipitation_unit: "mm",
-      timezone: "UTC",
+      // Epochs are absolute, so the payload stays canonical-UTC (D-006) while
+      // `auto` still yields the spot's utc_offset_seconds and local-day dailies.
+      timezone: "auto",
+      timeformat: "unixtime",
       cell_selection: "sea",
       forecast_days: "11",
     });
     const data = await getJson(`${base}/forecast?${params.toString()}`);
     const c = data.current ?? {};
     const h = data.hourly ?? {};
+    const d = data.daily ?? {};
+    const offsetSec = Number(data.utc_offset_seconds ?? 0);
     return {
+      utcOffsetSeconds: offsetSec,
       current: {
-        time: String(c.time ?? ""),
+        time: isoUtc(c.time),
         windSpeedMs: Number(c.wind_speed_10m ?? 0),
         windGustsMs: Number(c.wind_gusts_10m ?? 0),
         windDirectionDeg: Number(c.wind_direction_10m ?? 0),
         weatherCode: Number(c.weather_code ?? 0),
         temperatureC: Number(c.temperature_2m ?? 0),
       },
+      daily: {
+        date: Array.isArray(d.time)
+          ? d.time.map((t: unknown) => localDate(t, offsetSec))
+          : [],
+        sunrise: isoUtcAll(d.sunrise),
+        sunset: isoUtcAll(d.sunset),
+      },
       hourly: {
-        time: strs(h.time),
+        time: isoUtcAll(h.time),
         windSpeedMs: nums(h.wind_speed_10m),
         windGustsMs: nums(h.wind_gusts_10m),
         windDirectionDeg: nums(h.wind_direction_10m),

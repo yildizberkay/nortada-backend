@@ -8,6 +8,8 @@ import { successResponseSchema } from "@/packages/route-utils/openapi.schemas";
 import type { HonoContext } from "@/types";
 
 import {
+  batchConditionsQuerySchema,
+  batchConditionsResponseSchema,
   conditionsResponseSchema,
   forecastResponseSchema,
   spotUidParamSchema,
@@ -18,6 +20,39 @@ import {
 // route; distinct sub-paths so both routers coexist).
 export const weatherRoute = new Hono<HonoContext>();
 weatherRoute.use("*", authenticate);
+
+// NOTE: the path is /conditions/batch (two static segments) — a bare
+// /conditions would be swallowed by the spot router's GET /:uid, which is
+// mounted first on the same base.
+weatherRoute.get(
+  "/conditions/batch",
+  describeRoute({
+    operationId: "batchSpotConditions",
+    tags: ["weather"],
+    responses: {
+      200: {
+        description:
+          "Now-cast conditions for up to 50 spots in one round-trip (comma-separated uids; unresolvable spots are omitted)",
+        content: {
+          "application/json": {
+            schema: resolver(
+              successResponseSchema(batchConditionsResponseSchema),
+            ),
+          },
+        },
+      },
+    },
+  }),
+  zValidator("query", batchConditionsQuerySchema),
+  async (c) => {
+    const { uids, sport } = c.req.valid("query");
+    const result = await getContainer().weatherService.getConditionsBatch(
+      uids,
+      { sport },
+    );
+    return c.json(HTTPResponse.success(result));
+  },
+);
 
 weatherRoute.get(
   "/:uid/conditions",

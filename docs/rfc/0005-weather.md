@@ -91,8 +91,10 @@ number-in/verdict-out, so its safety logic is exhaustively unit-testable.
   code, the derived **verdict**, **confidence**, **best window**, the sea summary, and
   **freshness**. Served by `GET …/conditions`.
 - **Forecast.** The forward-looking strip: an **hourly** series (next 48h, each with its own
-  verdict) plus a **daily** roll-up (up to 11 UTC days, each carrying the day's best-hour
-  verdict and peak wind). Served by `GET …/forecast`.
+  verdict) plus a **daily** roll-up (up to 11 **spot-local** calendar days, each carrying the
+  day's best-hour verdict, min/max wind, max gust, a speed-weighted dominant direction, a
+  per-day confidence + best window, and sunrise/sunset). Served by `GET …/forecast`. All
+  times stay canonical UTC; `utcOffsetSeconds` tells the client how to shift for display.
 - **Verdict / Decision.** One of `go` (ideal), `watch` (marginal or cautioned), `skip`
   (unsuitable or unsafe) for a single hour and a single sport. The engine's output type is
   `Decision = "go" | "watch" | "skip"`.
@@ -172,7 +174,8 @@ history. Exported types: `WeatherCache` / `NewWeatherCache`, `WeatherModelMeta` 
 | Method | Path                            | Auth              | Summary                                                    |
 | ------ | ------------------------------- | ----------------- | ---------------------------------------------------------- |
 | GET    | `/v1/spots/:uid/conditions`     | anonymous or Clerk | Now-cast conditions + verdict + best window + sea + freshness |
-| GET    | `/v1/spots/:uid/forecast`       | anonymous or Clerk | Hourly (48h) + daily strip, each hour/day with a verdict   |
+| GET    | `/v1/spots/:uid/forecast`       | anonymous or Clerk | Hourly (48h) + enriched local-day daily strip, each hour/day with a verdict |
+| GET    | `/v1/spots/conditions/batch`    | anonymous or Clerk | Conditions for up to 50 spots in one round-trip (`?uids=a,b,c`) — the map viewport's markers; failed uids are omitted. Path is `/conditions/batch` because a bare `/conditions` would be swallowed by `spotRoute`'s earlier-mounted `GET /:uid`. |
 
 Both routes live in `weatherRoute` and are mounted under `/v1/spots` alongside `spotRoute`
 (distinct sub-paths, so both routers coexist). The router applies `authenticate` to `*`.
@@ -224,9 +227,16 @@ the anonymous token is sufficient — no ownership check (weather is not user-sc
         "windDirectionDeg": 270, "weatherCode": 3, "temperatureC": 24.5, "decision": "go" }
       // … up to 48 entries
     ],
+    "utcOffsetSeconds": 10800,       // spot-local offset; all times are UTC
     "daily": [
-      { "date": "2026-07-11", "maxWindMs": 13.1, "decision": "go" }
-      // … up to 11 UTC days; decision = the day's BEST-hour verdict
+      { "date": "2026-07-11",        // spot-LOCAL calendar day
+        "minWindMs": 4.2, "maxWindMs": 13.1, "maxGustMs": 15.9,
+        "dominantDirectionDeg": 275, // speed-weighted circular mean
+        "decision": "go",            // the day's BEST-hour verdict
+        "confidence": "high",        // stale + the day's worst gust-spread/precip
+        "bestWindow": { "start": "2026-07-11T13:00:00Z", "end": "2026-07-11T18:00:00Z", "peakWindMs": 12.9 },
+        "sunrise": "2026-07-11T02:47:00Z", "sunset": "2026-07-11T17:39:00Z" }
+      // … up to 11 local days
     ],
     "freshness": { "fetchedAt": "…", "modelRun": "…", "stale": false }
   }
@@ -360,8 +370,16 @@ CAPE, so the nearest hour's `capeJkg[0]` is used) → `computeConfidence` (gust 
 
 **`getForecast(spotUid, query)`** — resolve geo + sport → `getOrFetchForecast` → map the first
 48 hourly entries, each carrying its own `computeDecision` → `deriveDaily` → `freshness`.
-`deriveDaily` groups hours by UTC date (`time.slice(0,10)`), taking `maxWindMs` and the day's
-**best-hour** (least-severe) verdict as the headline.
+`deriveDaily` groups hours by the spot's **local** calendar day (UTC time + `utcOffsetSeconds`),
+taking min/max wind, max gust, a speed-weighted circular-mean direction, the day's **best-hour**
+(least-severe) verdict, a per-day confidence (global staleness + the day's worst gust-spread and
+precip odds), the day's own best window, and sunrise/sunset joined from the provider's daily
+block. Cached payloads written before these fields existed fail `isCurrentForecastShape` and
+refetch instead of serving the old shape.
+
+**`getConditionsBatch(uids, query)`** — dedupe, then `getConditions` per uid in chunks of 6
+(`Promise.allSettled`) so a cold cache doesn't stampede Open-Meteo; rejected spots are logged
+and omitted from `{ spots }` rather than failing the batch.
 
 **`resolveSport(spot, requested?)`** — an explicit `sport` must be in `spot.supportedSports`,
 else `FORM_ERROR / WEATHER_UNSUPPORTED_SPORT`; otherwise defaults to `supportedSports[0] ?? "other"`.
@@ -505,9 +523,11 @@ everything recomputes on the next read.
   ([[../otonom-kararlar]] §25): the engine used to say "go" until lightning struck (CAPE was
   fetched but unused) and treated offshore as a single narrow-band step. Both are life-safety,
   so CAPE now gives pre-storm lead time and offshore scales with wind strength.
-- **UTC vs local-day daily roll-up.** Kept UTC (`timezone=UTC`) so the cache is shared across
-  clients (D-006); local-day alignment via client aggregation or `timezone=auto` is a
-  fast-follow.
+- **UTC vs local-day daily roll-up.** Resolved (2026-07-14): the request now uses
+  `timeformat=unixtime&timezone=auto` — epochs are absolute so the stored payload stays
+  canonical UTC (D-006), while `utc_offset_seconds` and the provider's local-day daily block
+  give honest local-day dailies + sunrise/sunset without a second call. The client's 10-day
+  strip renders local days; a 21:00-local go-window no longer leaks into the next UTC day.
 
 ## 15. Implementation Plan (checklist)
 
@@ -565,7 +585,9 @@ everything recomputes on the next read.
   genuine product gap; MVP labels `current` honestly as a model nowcast).
 - ⏸️ **`wind-field` endpoint (P1)** — wind-vector grid data; the client draws it.
 - ⏸️ Marine stale-fallback; surface tide/wave/apparent-temp + visibility/UV in the response;
-  local-day daily alignment; Zod-validate the raw Open-Meteo body.
+  Zod-validate the raw Open-Meteo body. (Local-day daily alignment + sunrise/sunset +
+  `utcOffsetSeconds` + the batch conditions endpoint shipped 2026-07-14 for the iOS
+  conditions/forecast integration.)
 
 ## 17. References
 
