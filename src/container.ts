@@ -1,5 +1,6 @@
 import { type DBManager, getDBManager } from "@/db/db.manager";
 import { createActivityModule } from "@/domains/feature/activity/activity.module";
+import { createBriefingModule } from "@/domains/feature/briefing/briefing.module";
 import { createSpotModule } from "@/domains/feature/spot/spot.module";
 import { createWeatherModule } from "@/domains/feature/weather/weather.module";
 import { createAuthModule } from "@/domains/platform/auth/auth.module";
@@ -53,12 +54,22 @@ export function buildContainer(db: DBManager) {
     ...deps,
     spotPort: spotServices.spotService,
   });
+  // Briefing composes over spot + user + weather — pure ports, no repositories
+  // of its own (RFC-0010).
+  const briefing = createBriefingModule({
+    ...deps,
+    favoritePort: spotServices.favoriteService,
+    spotPort: spotServices.spotService,
+    profilePort: user.userProfileService,
+    weatherPort: weather.weatherService,
+  });
 
   return {
     ...auth,
     ...user,
     ...spotServices,
     ...weather,
+    ...briefing,
     ...activityServices,
   };
 }

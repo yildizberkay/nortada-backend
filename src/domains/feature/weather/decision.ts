@@ -29,6 +29,7 @@ interface WindThreshold {
  *   sailing      <4            │    8 – 16    │   >25   (dinghy reefs ~20)
  *   sup           —            │    0 – 5     │   >15
  *   kayak         —            │    0 – 6     │   >16
+ *   surfing       —            │    0 – 8     │   >20  (wind ruins the wave face)
  *   other        <4            │    8 – 20    │   >30
  */
 const THRESHOLDS: Record<Sport, WindThreshold> = {
@@ -38,6 +39,9 @@ const THRESHOLDS: Record<Sport, WindThreshold> = {
   sailing: { minMs: 2.1, idealMinMs: 4.1, idealMaxMs: 8.2, maxMs: 12.9 },
   sup: { minMs: 0, idealMinMs: 0, idealMaxMs: 2.6, maxMs: 7.7 },
   kayak: { minMs: 0, idealMinMs: 0, idealMaxMs: 3.1, maxMs: 8.2 },
+  // Wave-riding inverts like SUP: glassy/light is ideal, strong wind chops the
+  // face. (Swell quality itself is a marine-data fast-follow.)
+  surfing: { minMs: 0, idealMinMs: 0, idealMaxMs: 4.1, maxMs: 10.3 },
   other: { minMs: 2.1, idealMinMs: 4.1, idealMaxMs: 10.3, maxMs: 15.4 },
 };
 
@@ -106,6 +110,75 @@ export function computeDecision(input: DecisionInput): Decision {
   if (isHeavyPrecip(weatherCode)) d = worse(d, "watch");
 
   return d;
+}
+
+/** Structural "why" codes for a verdict — the client localizes; the server
+ * never ships prose. Emitted by `decisionReasons` from the SAME thresholds as
+ * `computeDecision`, so verdict and explanation cannot drift (RFC-0010). */
+export type DecisionReason =
+  | "wind_in_ideal_band"
+  | "wind_below_ideal"
+  | "wind_above_ideal"
+  | "too_light"
+  | "too_strong"
+  | "onshore"
+  | "cross_onshore"
+  | "cross_shore"
+  | "cross_offshore_caution"
+  | "offshore_risk"
+  | "steady_wind"
+  | "gusty"
+  | "gusts_overpowering"
+  | "storm_risk"
+  | "heavy_precipitation";
+
+const GUSTY_SPREAD_MS = 4; // noticeable gust spread; > ceiling = overpowering
+
+/** Midpoint of the sport's ideal band — the briefing's ranking tiebreak
+ * ("closest to perfect wind") without leaking the threshold table. */
+export function idealBandMidMs(sport: Sport): number {
+  const t = THRESHOLDS[sport];
+  return (t.idealMinMs + t.idealMaxMs) / 2;
+}
+
+/**
+ * The explanation counterpart of `computeDecision`: the same inputs, the same
+ * `THRESHOLDS`, but a priority-ordered reason list (band → shore side → gust
+ * character → storm/precip) instead of a verdict. Kept separate so the hot
+ * verdict paths (hourly loops, dailies) never pay for reason allocation.
+ */
+export function decisionReasons(input: DecisionInput): DecisionReason[] {
+  const { sport, windMs, gustMs, weatherCode, capeJkg } = input;
+  const t = THRESHOLDS[sport];
+  const reasons: DecisionReason[] = [];
+
+  if (windMs < t.minMs) reasons.push("too_light");
+  else if (windMs < t.idealMinMs) reasons.push("wind_below_ideal");
+  else if (windMs <= t.idealMaxMs) reasons.push("wind_in_ideal_band");
+  else if (windMs <= t.maxMs) reasons.push("wind_above_ideal");
+  else reasons.push("too_strong");
+
+  const side = sideOf(input);
+  if (side === "offshore") reasons.push("offshore_risk");
+  else if (side === "cross-offshore") reasons.push("cross_offshore_caution");
+  else if (side === "cross-shore") reasons.push("cross_shore");
+  else if (side === "cross-onshore") reasons.push("cross_onshore");
+  else if (side === "onshore") reasons.push("onshore");
+
+  const spread = gustMs - windMs;
+  if (gustMs > t.maxMs) reasons.push("gusts_overpowering");
+  else if (spread > GUSTY_SPREAD_MS) reasons.push("gusty");
+  else reasons.push("steady_wind");
+
+  if (
+    isThunderstorm(weatherCode) ||
+    (capeJkg != null && capeJkg > CAPE_WATCH)
+  ) {
+    reasons.push("storm_risk");
+  }
+  if (isHeavyPrecip(weatherCode)) reasons.push("heavy_precipitation");
+
+  return reasons;
 }
 
 export interface ConfidenceInput {

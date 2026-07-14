@@ -2,6 +2,7 @@ import {
   bestWindow,
   computeConfidence,
   computeDecision,
+  decisionReasons,
   type HourlySeries,
 } from "./decision";
 
@@ -181,5 +182,64 @@ describe("bestWindow", () => {
 
   it("returns null when nothing is suitable", () => {
     expect(bestWindow(series([2, 2, 2]), "windsurf", null)).toBeNull();
+  });
+});
+
+describe("decisionReasons", () => {
+  it("mirrors computeDecision's band verdict: ideal band + steady + cross-shore", () => {
+    const input = {
+      sport: "windsurf" as const,
+      windMs: 10,
+      gustMs: 12,
+      weatherCode: 0,
+      windDirectionDeg: 0,
+      shoreBearingDeg: 90,
+    };
+    expect(computeDecision(input)).toBe("go");
+    expect(decisionReasons(input)).toEqual([
+      "wind_in_ideal_band",
+      "cross_shore",
+      "steady_wind",
+    ]);
+  });
+
+  it("flags the offshore life-safety case alongside the skip verdict", () => {
+    const input = {
+      sport: "windsurf" as const,
+      windMs: 14, // above ideal → offshore scales to skip
+      gustMs: 16,
+      weatherCode: 0,
+      windDirectionDeg: 180,
+      shoreBearingDeg: 0,
+    };
+    expect(computeDecision(input)).toBe("skip");
+    expect(decisionReasons(input)).toEqual([
+      "wind_above_ideal",
+      "offshore_risk",
+      "steady_wind",
+    ]);
+  });
+
+  it("reports overpowering gusts and pre-storm CAPE", () => {
+    expect(
+      decisionReasons({
+        sport: "wingfoil",
+        windMs: 9,
+        gustMs: 16, // > wingfoil maxMs 15.4
+        weatherCode: 0,
+        capeJkg: 1500,
+      }),
+    ).toEqual(["wind_in_ideal_band", "gusts_overpowering", "storm_risk"]);
+  });
+
+  it("reports too_light + heavy precip without a shore bearing", () => {
+    expect(
+      decisionReasons({
+        sport: "windsurf",
+        windMs: 3,
+        gustMs: 4,
+        weatherCode: 65,
+      }),
+    ).toEqual(["too_light", "steady_wind", "heavy_precipitation"]);
   });
 });
