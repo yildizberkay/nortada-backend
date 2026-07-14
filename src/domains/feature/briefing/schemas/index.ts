@@ -67,6 +67,8 @@ const briefingSpotSchema = z
     waterType: z.enum(waterTypeEnum.enumValues).nullable(),
     supportedSports: z.array(sport),
     shoreBearingDeg: z.number().nullable(),
+    goodWindDirections: z.array(z.string()).nullable(),
+    riskyWindDirections: z.array(z.string()).nullable(),
     distanceKm: z.number().nullable(),
   })
   .describe("The compact spot slice the briefing renders")

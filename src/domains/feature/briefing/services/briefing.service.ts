@@ -86,6 +86,8 @@ interface BriefingSpot {
   waterType: Spot["waterType"];
   supportedSports: Spot["supportedSports"];
   shoreBearingDeg: number | null;
+  goodWindDirections: string[] | null;
+  riskyWindDirections: string[] | null;
   distanceKm: number | null;
 }
 
@@ -265,6 +267,8 @@ export class BriefingService extends BaseUseCase {
       waterType: spot.waterType,
       supportedSports: spot.supportedSports,
       shoreBearingDeg: spot.shoreBearingDeg,
+      goodWindDirections: spot.goodWindDirections,
+      riskyWindDirections: spot.riskyWindDirections,
       distanceKm:
         spot.distanceKm ??
         (query.lat != null && query.lon != null
