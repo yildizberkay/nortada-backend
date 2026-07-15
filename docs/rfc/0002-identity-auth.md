@@ -555,6 +555,16 @@ Co-located specs, all deps mocked (RFC-0001 test harness injects a mock config s
 - **Check-then-insert for provisioning.** Rejected — it races the partial-unique indexes under
   cold-launch parallelism and 500s. Replaced by idempotent `ON CONFLICT DO NOTHING` + re-read and
   the link-race fallthrough ([[../otonom-kararlar]] §15).
+- **Switch provider entirely (Firebase Auth / Supabase Auth / Better Auth / Stytch).**
+  Re-evaluated 2026-07-14 against the two product criteria (native iOS SDK + anonymous login) and
+  rejected — full analysis in [[../decisions]] **D-010**. In short: Clerk's iOS SDK reached v1/GA
+  (Feb 2026), removing the old "beta SDK" concern; Clerk still lacks anonymous users but our own
+  anonymous JWT (this RFC) already closes that gap and keeps anonymous devices off provider MAU
+  billing. Firebase Auth is the only candidate matching both criteria out of the box, but the
+  migration would discard this implemented and reviewed auth domain for a Google-ecosystem
+  lock-in; Supabase Auth cannot link anonymous→permanent through the native flow (browser
+  redirect); Better Auth has no native Swift SDK; Stytch has no anonymous user model. Revisit
+  when the Clerk bill becomes material at scale (trigger documented in D-010).
 
 ## 15. Implementation Plan (checklist)
 
