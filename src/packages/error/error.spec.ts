@@ -8,7 +8,7 @@ describe("GenericError", () => {
     ["FORBIDDEN", 403],
     ["NOT_FOUND", 404],
     ["EXTERNAL_SERVICE_ERROR", 500],
-    ["ALREADY_EXISTS", 409], // Splash delta — brandscale used 422
+    ["ALREADY_EXISTS", 409], // Nortada delta — brandscale used 422
     ["CONFLICT", 409],
     ["RATE_LIMIT_EXCEEDED", 429],
   ];
@@ -19,7 +19,7 @@ describe("GenericError", () => {
     expect(error.statusCode).toBe(status);
   });
 
-  it("maps ALREADY_EXISTS to 409, not 422 (Splash delta)", () => {
+  it("maps ALREADY_EXISTS to 409, not 422 (Nortada delta)", () => {
     const error = new GenericError("ALREADY_EXISTS");
     expect(error.statusCode).toBe(409);
   });

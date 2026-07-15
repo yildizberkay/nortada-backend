@@ -18,7 +18,7 @@ export interface PutOptions {
 
 /**
  * Blob-storage port (S3 / R2 / MinIO-compatible). The only large-object store in
- * Splash today is the raw GPS track (RFC-0006 L0), which is too big to belong in
+ * Nortada today is the raw GPS track (RFC-0006 L0), which is too big to belong in
  * Postgres. Services depend on this interface, never the concrete client.
  */
 export interface ObjectStorage {

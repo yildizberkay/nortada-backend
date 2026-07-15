@@ -32,7 +32,7 @@ export type JsonValue =
 // ─── Shared column builders ─────────────────────────────────────────────────
 // Every table carries an internal integer identity PK (`id`) plus a public,
 // opaque UUID (`uid`) that is the only id surfaced through the API. Timestamps
-// are `timestamptz` (UTC) — Splash is global and stores weather/session times
+// are `timestamptz` (UTC) — Nortada is global and stores weather/session times
 // in UTC (docs/otonom-kararlar.md §6). Helpers are FUNCTIONS (not shared column
 // objects) so each table gets a fresh builder instance — Drizzle mutates
 // builders when they are attached to a table.

@@ -32,7 +32,7 @@ so verdict and explanation can never drift apart.
 - **Problem.** Today is the app's flagship screen and the only major surface still running on
   mock data. Its needs (a ranked pick, a state machine, "Why today" reasons) span favorites ×
   conditions × the decision engine — composing them client-side would duplicate the engine's
-  thresholds in Swift and drift (SPLASH-OVERVIEW: "every recommendation must answer *Why?*").
+  thresholds in Swift and drift (NORTADA-OVERVIEW: "every recommendation must answer *Why?*").
 - **Background.** RFC-0005 shipped the per-spot verdict/conditions engine and (2026-07-14) the
   batch conditions endpoint; RFC-0004 shipped favorites + nearby; RFC-0003 has `primarySport`.
   All the ingredients exist server-side — this RFC only arranges them.
@@ -201,4 +201,4 @@ derives on read (RFC-0005 §12 rationale).
 ## 17. References
 
 RFC-0004 (favorites, nearby) · RFC-0005 (conditions, decision engine, batch discipline) ·
-RFC-0003 (`primarySport`) · [[../SPLASH-OVERVIEW]] (Today briefing product contract)
+RFC-0003 (`primarySport`) · [[../NORTADA-OVERVIEW]] (Today briefing product contract)

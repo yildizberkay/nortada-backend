@@ -1,4 +1,4 @@
-# Splash — Metrik Kataloğu (taslak, tartışılacak)
+# Nortada — Metrik Kataloğu (taslak, tartışılacak)
 
 *Senin çerçevenle üç aile: (A) bir seans için hesaplanan metrikler, (B) hava durumu için çekilen/hesaplanan metrikler, (C) seansların toplamından çıkan insight'lar. Çoğu iOS uygulamasında zaten tanımlı — burada kaynağını da göstererek konsolide ediyorum, backend'in neyi saklayıp hesaplayacağına karar verebilelim. `Kaynak` kolonu: ham GPS'ten mi, kullanıcıdan mı, Open-Meteo'dan mı, yoksa hesaplama mı.*
 

@@ -11,7 +11,7 @@ export type ErrorCode =
   | "CONFLICT"
   | "RATE_LIMIT_EXCEEDED";
 
-// Splash delta (docs/architecture.md §2): ALREADY_EXISTS → 409, not brandscale's
+// Nortada delta (docs/architecture.md §2): ALREADY_EXISTS → 409, not brandscale's
 // 422. `UNAUTHENTICATED` (401) / `FORBIDDEN` (403) — never `UNAUTHORIZED`.
 const statusCodeMap: Record<ErrorCode, number> = {
   INTERNAL_ERROR: 500,

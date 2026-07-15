@@ -1,15 +1,15 @@
-# Splash — Proje Genel Bakış (backend öncesi ortak anlayış)
+# Nortada — Proje Genel Bakış (backend öncesi ortak anlayış)
 
-*`~/dev/personal/splash/` altındaki tüm parçalar incelenerek çıkarıldı — PRD + iOS kaynak kodunun derinlemesine okunması (11 Temmuz 2026). Amaç: backend ihtiyaçlarını belirlemeden önce uygulamayı tam anlamak.*
+*`~/dev/personal/nortada/` altındaki tüm parçalar incelenerek çıkarıldı — PRD + iOS kaynak kodunun derinlemesine okunması (11 Temmuz 2026). Amaç: backend ihtiyaçlarını belirlemeden önce uygulamayı tam anlamak.*
 
-## 1. Splash nedir?
+## 1. Nortada nedir?
 
-Splash, **rüzgâr/su sporlarıyla uğraşan insanlar için bir uygulama** — rüzgâr sörfü, yelken, wingfoil (ileride kitesurf, SUP, kayak). İki işi bir arada yapar:
+Nortada, **rüzgâr/su sporlarıyla uğraşan insanlar için bir uygulama** — rüzgâr sörfü, yelken, wingfoil (ileride kitesurf, SUP, kayak). İki işi bir arada yapar:
 
 1. **Karar verdirir** — suya çıkmadan önce "bugün nereye, ne zaman gideyim, koşullar benim sporum/seviyem için iyi mi riskli mi?" Bu, su sporcusuna özel bir hava durumu deneyimi: genel bir hava uygulaması değil, spot + rüzgâr + gust odaklı.
 2. **Seansı kaydeder ve öğretir** — sudayken telefonla (ileride Apple Watch'la) kendini track edersin: en iyi hız (knot), mesafe, hız grafiği, 500m'deki en iyi hız gibi speedsurfing metrikleri. Sonra geçmişinden ne zaman/nerede/hangi ekipmanla daha hızlı olduğunu öğrenirsin.
 
-Temel vaat (PRD): *"Suya çıkmadan önce Splash sana nereye gideceğini, ne zaman gideceğini, rüzgâr verisinin ne kadar güvenilir olduğunu ve koşulların neden iyi ya da riskli olduğunu söyler."*
+Temel vaat (PRD): *"Suya çıkmadan önce Nortada sana nereye gideceğini, ne zaman gideceğini, rüzgâr verisinin ne kadar güvenilir olduğunu ve koşulların neden iyi ya da riskli olduğunu söyler."*
 
 ### Kullanıcının bakışıyla ana akışlar
 
@@ -19,17 +19,17 @@ Temel vaat (PRD): *"Suya çıkmadan önce Splash sana nereye gideceğini, ne zam
 - **Kimlik** — **anonim devam edilebilir** ya da **giriş yapıp geçmişi/verisi kaydedilebilir**. *(Kullanıcının açıkça vurguladığı gereksinim — bkz. §4, kodda henüz yok.)*
 - **Apple Watch** — saatten veri toplama. *(Kullanıcının beklentisi; PRD'de V2, kodda henüz yok.)*
 
-### Splash ne DEĞİLDİR (v1)
+### Nortada ne DEĞİLDİR (v1)
 
 Waterspeed klonu değil, "su sporları Strava'sı" değil, sosyal ağ değil, yarış analitiği paketi değil, 30 sporluk genel tracker değil. İlk giriş noktası performans değil, **spot'a özel rüzgâr istihb, sonra tracking**.
 
 ## 2. Depo yapısı
 
 ```
-~/dev/personal/splash/
-├── Splash/           # Native iOS uygulaması (SwiftUI + SwiftData) — kendi git repo'su
-├── splash-design/    # PRD v0.2 (~3100 satır) + HTML mock'lar  ⚠ kod v0.3'ü takip ediyor (aşağıda)
-├── splash-backend/   # Backend — BOŞ, yazılacak olan (bu proje)
+~/dev/personal/nortada/
+├── nortada-app-ios/  # Native iOS uygulaması (SwiftUI + SwiftData) — kendi git repo'su
+├── nortada-design/   # PRD v0.2 (~3100 satır) + HTML mock'lar  ⚠ kod v0.3'ü takip ediyor (aşağıda)
+├── nortada-backend/  # Backend (bu proje)
 └── weather-sim/      # WebGL2 hava simülasyonu → iOS'taki Metal gökyüzünün kaynağı
 ```
 
@@ -47,7 +47,7 @@ Beş sekmeli kabuk (`RootTabView`): **Today · Spots · Track · Activity · Pro
 | Canlı gökyüzü (Metal) | **Gerçek ama offline** — WMO kodu+konum+saat girişi; konum İstanbul'a sabitlenmiş | `WeatherSkyEngine.swift:236`, `TodayView.swift:219` "stubbed" |
 | **Canlı GPS tracking** | **YOK — tamamen simüle** | `CLLocationManager` hiç yok; `LiveTrackingView.swift:21,25` sabit `sampleTrack` + sabit metrikler |
 | Peak split'ler (500m vb.), VMG | **Türetilmiş, gerçek değil** — `maxSpeed × katsayı`; VMG `nil` | `Models.swift:289` "until real GPS analysis lands" |
-| **Auth / anonim vs. login** | **YOK** — hiç kimlik, token, hesap kavramı yok | AuthenticationServices import edilmiyor; Plan "Splash Pro" sabit metin |
+| **Auth / anonim vs. login** | **YOK** — hiç kimlik, token, hesap kavramı yok | AuthenticationServices import edilmiyor; Plan "Nortada Pro" sabit metin |
 | Alarmlar (rüzgâr) | Model var; **değerlendirme motoru + push YOK**, in-memory | `AlertModels.swift:31` (kural şeması) / `:112` in-memory; UNUserNotification yok |
 | Abonelik (Paywall) | **Statik UI** — StoreKit yok; pro-kilit sadece index'e göre | `PaywallView.swift:10,171`; `SpotDetailView.swift:760` `index >= freeCount` |
 | Apple Watch / HealthKit | **YOK** — hiçbir import, watch target yok | — |
@@ -78,7 +78,7 @@ Bunlar benim ilk taslağımda fazla/yanıltıcıydı; düzeltiyorum:
 ## 6. Diğer parçalar (kısaca)
 
 - **weather-sim/** — WebGL2 canlı gökyüzü prototipi (volumetrik bulut, yağış, fırtına, gerçek astronomi, 28 WMO kodu, sunucusuz). `TECHNICAL.md` Metal port spec'i. iOS'taki `WeatherSky` bunun taşınmış hali — **hava kodunu Open-Meteo besleyecek, konumu şu an İstanbul'a sabit.**
-- **splash-design/** — PRD v0.2 + HTML mock'lar + tasarım skill'leri. Personalar, monetizasyon sıralaması, 25 ekran brief'i, veri modeli (§13), backend gereksinimleri (§14: `/v1/spots/...`, favoriler, alarmlar, oturumlar, gear; Postgres+PostGIS + TS/Node önerisi), 10 günlük plan.
+- **nortada-design/** — PRD v0.2 + HTML mock'lar + tasarım skill'leri. Personalar, monetizasyon sıralaması, 25 ekran brief'i, veri modeli (§13), backend gereksinimleri (§14: `/v1/spots/...`, favoriler, alarmlar, oturumlar, gear; Postgres+PostGIS + TS/Node önerisi), 10 günlük plan.
 
 ## 7. Özet: backend'in dolduracağı boşluk
 

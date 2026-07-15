@@ -36,7 +36,7 @@ number-in/verdict-out, so its safety logic is exhaustively unit-testable.
 
 ## 2. Motivation & Context
 
-- **Problem.** The iOS app ([[../SPLASH-OVERVIEW]]) ships a mock forecast and a hard-coded
+- **Problem.** The iOS app ([[../NORTADA-OVERVIEW]]) ships a mock forecast and a hard-coded
   verdict. The whole product promise — "should I go out, and when?" — needs a real weather
   source and a real decision engine keyed on each spot's coordinates and shore orientation.
   Naively refreshing weather for every spot in the database would burn API calls and compute
@@ -595,4 +595,4 @@ everything recomputes on the next read.
 
 [[../weather-openmeteo-mapping]] · [[decisions]] D-003/D-004/D-006/D-007 ·
 [[../otonom-kararlar]] §24–27 · [[../metrics-catalog]] · [[0004-spot]] · [[0001-foundation]] ·
-[[../SPLASH-OVERVIEW]]
+[[../NORTADA-OVERVIEW]]

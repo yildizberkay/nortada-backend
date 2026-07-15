@@ -58,19 +58,19 @@ token set. Neither the client nor a replayed/duplicated upstream event can corru
 
 ## 2. Motivation & Context
 
-- **Problem.** In the app today ([[../SPLASH-OVERVIEW]] §3), both surfaces are stubs:
+- **Problem.** In the app today ([[../NORTADA-OVERVIEW]] §3), both surfaces are stubs:
   - *Subscriptions:* `PaywallView.swift` is a **static UI** — no StoreKit, no RevenueCat; the
     "pro" lock is a pure client-side index check (`SpotDetailView.swift:760`, `index >=
     freeCount`). There is no server concept of a paying user, so no feature can be safely gated
     and no revenue event is recorded.
   - *Notifications:* there is **no push at all** — no `UNUserNotificationCenter` wiring, no
     device tokens, no send path. The alert rule model exists (`AlertModels.swift`) but has
-    "no evaluation engine + no push" ([[../SPLASH-OVERVIEW]] §3 table).
+    "no evaluation engine + no push" ([[../NORTADA-OVERVIEW]] §3 table).
 - **Background.** The reference backend ([[reference/brandscale-architecture]]) already contains
   a webhook-driven subscription/entitlement pattern (it used Polar); we adopt the *shape* of it
   (verify → idempotent event log → project entitlement → port) and swap the provider to
-  RevenueCat. Push is new to Splash but standard: token-based APNs. Product/monetization intent
-  is in [[../SPLASH-OVERVIEW]] §5 and the design PRD; the identity model this builds on is
+  RevenueCat. Push is new to Nortada but standard: token-based APNs. Product/monetization intent
+  is in [[../NORTADA-OVERVIEW]] §5 and the design PRD; the identity model this builds on is
   [[0002-identity-auth]] (dual anonymous-JWT / Clerk auth, `c.var.user`).
 - **Goals.**
   - A **RevenueCat webhook receiver** that verifies authenticity, is idempotent per event id,
@@ -120,12 +120,12 @@ token set. Neither the client nor a replayed/duplicated upstream event can corru
 
 - **App User ID.** RevenueCat's identifier for a customer. **We set it equal to our user
   `uid`** — the client calls `Purchases.logIn(user.uid)`, so RevenueCat's customer maps 1:1 to a
-  Splash user. This is the join key on every webhook (`event.app_user_id`).
-- **Entitlement.** A named capability grant (Splash has one: `pro`). RevenueCat decides whether
+  Nortada user. This is the join key on every webhook (`event.app_user_id`).
+- **Entitlement.** A named capability grant (Nortada has one: `pro`). RevenueCat decides whether
   an entitlement is active; we mirror its verdict. The entitlement id that grants premium is
   config (`REVENUECAT_PRO_ENTITLEMENT_ID`, default `"pro"`).
-- **Product.** The store SKU behind an entitlement (e.g. `splash_pro_monthly`,
-  `splash_pro_annual`). One entitlement can be served by several products.
+- **Product.** The store SKU behind an entitlement (e.g. `nortada_pro_monthly`,
+  `nortada_pro_annual`). One entitlement can be served by several products.
 - **Store.** Where the purchase lives: `app_store` (Apple, v1), plus `play_store`, `stripe`,
   `promotional`, `amazon` for forward-compatibility.
 - **Subscription (our projection).** One row per `(userId, entitlementId)` holding the *current*
@@ -296,7 +296,7 @@ export const notificationStatusEnum = pgEnum("notification_status", [
   safety, complementing RFC-0008's own `lastFiredAt` debounce).
 - **Scale note:** one row per (notification × token). If fan-out ever grows large we can split
   into `notification` (logical) + `notification_delivery` (per token); the single-table form is
-  chosen for now because Splash volumes are small (§12).
+  chosen for now because Nortada volumes are small (§12).
 
 ### 5.5 Migration & ordering
 
@@ -338,7 +338,7 @@ app.route("/v1/me", deviceTokenRoute);               // POST/DELETE/GET /device-
   ```jsonc
   { "api_version": "1.0",
     "event": { "id": "…", "type": "RENEWAL", "app_user_id": "usr_uid",
-               "entitlement_ids": ["pro"], "product_id": "splash_pro_monthly",
+               "entitlement_ids": ["pro"], "product_id": "nortada_pro_monthly",
                "store": "APP_STORE", "environment": "PRODUCTION",
                "purchased_at_ms": 1720000000000, "expiration_at_ms": 1722678400000 } }
   ```
@@ -800,7 +800,7 @@ Domain" checklist ([[../CLAUDE]]).*
 
 - App: `PaywallView.swift` (static paywall), `SpotDetailView.swift` (`index >= freeCount` client
   lock), `AlertModels.swift` (alert rules, no push).
-- [[../SPLASH-OVERVIEW]] §3 (real-vs-stub table), §5 (monetization intent).
+- [[../NORTADA-OVERVIEW]] §3 (real-vs-stub table), §5 (monetization intent).
 - [[decisions]] D-002 (RevenueCat; dual auth), D-008 (anon→merge reassign seam).
 - [[0002-identity-auth]] (identity, `c.var.user`, `MergeReassigner`), [[0008-alerts]] (consumes
   the `NotificationPort`), [[0007-insights]] (consumes the `EntitlementPort`).

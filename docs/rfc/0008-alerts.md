@@ -24,7 +24,7 @@
 
 ## 1. Summary
 
-Condition Alerts turns Splash's core "is today good?" verdict into a **push you receive without
+Condition Alerts turns Nortada's core "is today good?" verdict into a **push you receive without
 opening the app**. A user subscribes a **favorited spot** and **one or more sports** to
 good-condition alerts, optionally tightening the thresholds (minimum/maximum wind, gust ceiling,
 allowed wind directions, minimum confidence) and constraining *when* they care (days of week,
@@ -47,7 +47,7 @@ runs is alerted **once**.
 
 - **Problem.** The iOS app already ships an alert *rule model* (`AlertModels.swift`) but has **no
   evaluation engine and no push** — it is in-memory and resets on every launch
-  ([[../SPLASH-OVERVIEW]] §3, "Alarms" row). The product's headline promise is telling a rider
+  ([[../NORTADA-OVERVIEW]] §3, "Alarms" row). The product's headline promise is telling a rider
   *when* to go out; an alert that pings them when their spot turns "go" is that promise made
   proactive. The PRD ranks alerts in the **top-2 monetization** surfaces (PRD §10.15).
 - **Background.** This RFC sits on top of three finished/planned domains: **RFC-0004 (spot)** owns
@@ -56,7 +56,7 @@ runs is alerted **once**.
   **decision engine** with per-sport wind bands and `bestWindow` (`src/domains/feature/weather/
   decision.ts`); **RFC-0009 (notification)** owns APNs push-token registration and
   `NotificationService.sendPush(userId, payload)`. Alerts is the first consumer that *composes* all
-  three. Product framing: [[../SPLASH-OVERVIEW]]; cache philosophy: [[decisions]] D-004; threshold
+  three. Product framing: [[../NORTADA-OVERVIEW]]; cache philosophy: [[decisions]] D-004; threshold
   research: [[../otonom-kararlar]] §24; unit policy: [[decisions]] D-006.
 - **Goals.**
   - A user-scoped `alert_subscription` (favorited spot + chosen sport(s) + optional threshold,
@@ -395,7 +395,7 @@ export const alertDeliveryResponseSchema = z
 - **POST `/v1/me/alerts`** — validates that `spotUid` resolves to a *published* spot the caller has
   *favorited*, and that every entry in `sports` is in the spot's `supportedSports`. Errors:
   `NOT_FOUND` (spot / not favorited → 404), `FORM_ERROR` (sport unsupported, min>max, bad timezone →
-  422), `ALREADY_EXISTS` (identical criteria on the same spot → **409**, Splash delta), and
+  422), `ALREADY_EXISTS` (identical criteria on the same spot → **409**, Nortada delta), and
   `FORBIDDEN`/`FORM_ERROR` when the subscription cap is hit (§10). Success → **201** `{ data:
   AlertSubscription }`.
 - **PATCH `/v1/me/alerts/:uid`** — same validations for changed fields; `NOT_FOUND` if the row isn't
@@ -829,6 +829,6 @@ Aligned with the "Adding a New Domain" checklist in [[../CLAUDE]] (bucket = `fea
 
 ## 17. References
 
-[[../SPLASH-OVERVIEW]] · [[0005-weather]] · [[0004-spot]] · [[0009-subscription-notification]] ·
+[[../NORTADA-OVERVIEW]] · [[0005-weather]] · [[0004-spot]] · [[0009-subscription-notification]] ·
 [[weather-openmeteo-mapping]] · [[metrics-catalog]] B · [[decisions]] (D-004, D-006, D-007, D-008) ·
 [[../otonom-kararlar]] (§0, §24, §27) · app `AlertModels.swift` · PRD §10.15

@@ -47,9 +47,9 @@ if (globalConfig.isDev) {
     openAPIRouteHandler(app as never, {
       documentation: {
         info: {
-          title: "Splash API",
+          title: "Nortada API",
           version: "0.1.0",
-          description: "Splash backend API documentation",
+          description: "Nortada backend API documentation",
         },
         components: {
           securitySchemes: {
@@ -69,7 +69,7 @@ if (globalConfig.isDev) {
     "/docs",
     swaggerUI({
       url: "/openapi.json",
-      title: "Splash API Docs",
+      title: "Nortada API Docs",
     }),
   );
 }

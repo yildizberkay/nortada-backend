@@ -17,8 +17,8 @@ const makeAnonToken = (uid: string) =>
   new SignJWT({ tokenType: "anonymous" })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(uid)
-    .setIssuer("splash-anon")
-    .setAudience("splash-api")
+    .setIssuer("nortada-anon")
+    .setAudience("nortada-api")
     .setIssuedAt()
     .sign(ANON_SECRET);
 

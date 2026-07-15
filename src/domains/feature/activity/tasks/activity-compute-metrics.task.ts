@@ -15,7 +15,7 @@ import {
 
 /**
  * Canonical metric computation from a raw GPS track (D-001). Re-runnable when
- * ALGORITHM_VERSION bumps. Follows the Splash Trigger pattern: acquire a per-task
+ * ALGORITHM_VERSION bumps. Follows the Nortada Trigger pattern: acquire a per-task
  * pool, build the graph, always reset in `finally`.
  */
 export const activityComputeMetricsTask = schemaTask({

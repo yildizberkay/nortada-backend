@@ -1,13 +1,13 @@
-# Splash Backend — Claude Instructions
+# Nortada Backend — Claude Instructions
 
-Watersports decision + tracking app backend. iOS app ([[../Splash]]) is design-only; this backend replaces its sample data. Product context: `docs/SPLASH-OVERVIEW.md`.
+Watersports decision + tracking app backend. iOS app ([[../nortada-app-ios]]) is design-only; this backend replaces its sample data. Product context: `docs/NORTADA-OVERVIEW.md`.
 
 ## Stack
 Node.js + Hono + Drizzle ORM + TypeScript. PostgreSQL (via `pg`). Clerk auth + our own anonymous JWT. Trigger.dev (background/cron). RevenueCat (subscriptions, last). Weather via Open-Meteo. OpenAPI/Swagger via `hono-openapi` + `@hono/swagger-ui`. Zod v4. Likely deployed on Railway.
 
 ## Before Writing Code (REQUIRED)
 Read the relevant docs for the area first:
-- **Architecture / conventions** → `docs/architecture.md` (Splash deltas) + `docs/reference/brandscale-architecture.md` (the detailed pattern reference we adopt).
+- **Architecture / conventions** → `docs/architecture.md` (Nortada deltas) + `docs/reference/brandscale-architecture.md` (the detailed pattern reference we adopt).
 - **The RFC you're implementing** → `docs/rfc/<NNNN>-*.md` (index: `docs/rfc/README.md`).
 - **Decisions already made** → `docs/decisions.md` (D-001..).
 - **Domain design docs** → `docs/activity-data-model.md`, `docs/weather-openmeteo-mapping.md`, `docs/spot-model-and-sourcing.md`, `docs/metrics-catalog.md`, `docs/research/gps-tracking.md`.
@@ -36,11 +36,11 @@ Read the relevant docs for the area first:
 
 ## Architecture (quick reminders — detail in `docs/architecture.md` + `docs/reference/brandscale-architecture.md`)
 - **Layers:** `route → service → repository → drizzle`. Service extends `BaseUseCase` (no DB access, only `this.config`); Repository extends `BaseRepository` (`this.dbClient`). DB operators (`eq`,`and`…) and `*Table` refs ONLY in repositories.
-- **DI (Splash delta):** NO central mega-factory. Each domain has `<domain>.module.ts` exporting `create<Domain>Module(deps)` returning its public services (repos stay internal). Root `src/container.ts` `buildContainer(db)` composes modules; cross-domain deps passed explicitly. See RFC-0001 §6.
+- **DI (Nortada delta):** NO central mega-factory. Each domain has `<domain>.module.ts` exporting `create<Domain>Module(deps)` returning its public services (repos stay internal). Root `src/container.ts` `buildContainer(db)` composes modules; cross-domain deps passed explicitly. See RFC-0001 §6.
 - **Buckets:** `src/domains/platform/*` (stable shared kernel) vs `src/domains/feature/*` (bounded contexts). `platform→feature` forbidden (`scripts/check-import-direction.sh`).
 - **Routes:** `async (c)` (never `c: Context`); `c.req.valid("json"|"param"|"query")` (never `c.req.json()`); user via `c.var.user`. Response schemas carry `.describe()` + `.meta({ ref: "PascalCase" })`. Success `{ data }`, error `{ error, reason?, message, statusCode }`.
 - **DB:** every table `id` (integer identity) + `uid` (text uuid, public); jsonb always `.$type<JsonValue>()`; all tables/enums/relations + `dbSchema` + inferred types in `src/db/schema.ts`.
-- **Errors:** `GenericError(code, { reason, message })`; `UNAUTHENTICATED`(401) vs `FORBIDDEN`(403), never `UNAUTHORIZED`. **`ALREADY_EXISTS` → 409 in Splash** (Splash delta; brandscale used 422).
+- **Errors:** `GenericError(code, { reason, message })`; `UNAUTHENTICATED`(401) vs `FORBIDDEN`(403), never `UNAUTHORIZED`. **`ALREADY_EXISTS` → 409 in Nortada** (Nortada delta; brandscale used 422).
 - **Config:** services/repos use `this.config`, never `globalConfig` directly. Guarded `initialize()` (`if (this._x) return;`).
 - **Trigger.dev:** `<name>.{schema,task,trigger}.ts`; task calls `initializeForTrigger()` + `createDBManagerForTrigger()` + `buildContainer(db)` + `finalizeTrigger()`; invoked from services, never routes.
 - **Units:** API returns canonical SI (m/s, m, °C); client converts (D-006).

@@ -422,7 +422,7 @@ upserts), `replaceEfforts` (delete-then-insert), and `reassignOwner(from, to, tx
 **`activity-compute-metrics`** (`activity-compute-metrics.{schema,task,trigger}.ts`).
 
 - **Payload:** `{ activityUid: uuid }`.
-- **Task:** a `schemaTask` following the Splash pattern — `initializeForTrigger()` +
+- **Task:** a `schemaTask` following the Nortada pattern — `initializeForTrigger()` +
   `createDBManagerForTrigger()` (per-task pool) + `buildContainer(dbManager)` inside `try`,
   `logger.trace("compute-metrics", …)` around `activityMetricsService.computeAndStore(uid)`,
   `Tracking.captureException` on error, and always `finalizeTrigger(dbManager)` in `finally`.

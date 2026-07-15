@@ -1,6 +1,6 @@
 # BrandScale Backend — Architecture Digest (reusable template)
 
-*Referans mimari. `~/dev/kodera-code-base/brandscale/brandscale-backend` projesinin domain-agnostik iskeleti çıkarıldı (2026-07-11). Splash backend'ini bu desenlerle kuracağız. Brandscale'in iş domainleri (photo, brand-dna) alakasız — kopyalanacak olan mimari/konvansiyonlar.*
+*Referans mimari. `~/dev/kodera-code-base/brandscale/brandscale-backend` projesinin domain-agnostik iskeleti çıkarıldı (2026-07-11). Nortada backend'ini bu desenlerle kuracağız. Brandscale'in iş domainleri (photo, brand-dna) alakasız — kopyalanacak olan mimari/konvansiyonlar.*
 
 Stack: Node.js + Hono (HTTP) + Drizzle ORM (Postgres/PgBouncer, `pg`) + Zod v4 + Trigger.dev + Clerk + Redis. **Modüler monolit**, katı modül sınırları grep script'iyle enforce edilir.
 
@@ -187,7 +187,7 @@ Service'ten invoke edilir. Cron `schedules.task` (payload'suz, `.trigger.ts` yok
 
 `src/middlewares/*.middleware.ts`. Öne çıkanlar:
 - **`authenticate`** — Clerk token doğrular, DB user'ı `externalId`'den bulur, `c.var.user` + `c.var.account` set eder; provision değilse `UNAUTHENTICATED`.
-- **`authenticate-app-jwt`** — **login'siz app'ler için stateless JWT** → `c.var.appAuth`. *(Splash'in anonim modu için birebir uygun desen.)*
+- **`authenticate-app-jwt`** — **login'siz app'ler için stateless JWT** → `c.var.appAuth`. *(Nortada'nın anonim modu için birebir uygun desen.)*
 - `clerkMiddleware` (pre-provision `/bootstrap` için `c.var.clerkIdentity`), `require-role`, `require-developer`, `rate-limit`, `error-handler`.
 
 Context tipi `src/types.ts`: `HonoContext<IsUserOptional=false>`. Authed route `new Hono<HonoContext>()`, opsiyonel-user route `new Hono<HonoContext<true>>()`. **Handler'lar header'ı doğrudan okumaz** — cross-cutting header her zaman `c.var`'a yazan bir middleware olur. App wiring `src/app/app.ts`: `contextStorage()`, `compress()`, `cors()`, `/health`, `registerRoutes`, dev `/docs`, `onError`.
@@ -198,7 +198,7 @@ Jest + ts-jest. `testMatch: ["**/*.spec.ts"]`, `clearMocks`/`restoreMocks`. **Co
 
 ## 13. Tooling
 
-Node 22, ESM (Splash tooling: `engines >=22`, tsup `target: node22`). Dev `tsx watch`, build `tsup`, lint **Biome** (2-space, lineWidth 80, double quote, import sırası: `node:` → external → `@/` → same-domain relative). Type check `tsc --project tsconfig.check.json`. Import yönü `scripts/check-import-direction.sh`. Path alias `@/` → `src/`; domain'ler arası `@/`, domain içi relative. Her değişiklik gate'i: `lint:biome:fix` → `lint:type` → `test` → değişen service'lere test yaz.
+Node 22, ESM (Nortada tooling: `engines >=22`, tsup `target: node22`). Dev `tsx watch`, build `tsup`, lint **Biome** (2-space, lineWidth 80, double quote, import sırası: `node:` → external → `@/` → same-domain relative). Type check `tsc --project tsconfig.check.json`. Import yönü `scripts/check-import-direction.sh`. Path alias `@/` → `src/`; domain'ler arası `@/`, domain içi relative. Her değişiklik gate'i: `lint:biome:fix` → `lint:type` → `test` → değişen service'lere test yaz.
 
 ## 14. Yeni domain ekleme checklist'i
 
@@ -217,7 +217,7 @@ Node 22, ESM (Splash tooling: `engines >=22`, tsup `target: node22`). Dev `tsx w
 13. `src/domains/index.ts` — `app.route("/v1/<domain>", <domain>Route)`.
 14. `lint:biome:fix && lint:type && lint:imports && test`.
 
-## Splash için kopyalarken kararlar
+## Nortada için kopyalarken kararlar
 - `ALREADY_EXISTS` kodda **422**, doc'ta 409 — birini bilinçli seç.
 - Route validator'ı `hono-openapi`'den (`@hono/standard-validator` kurulu olsa da) — `describeRoute`/`resolver` ile tutarlılık için.
 - Client hata zarfı: `{ error, reason?, message, statusCode }`; başarı zarfı: `{ data }`.

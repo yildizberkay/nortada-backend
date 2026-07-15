@@ -1,4 +1,4 @@
-# Splash Backend — RFC Index
+# Nortada Backend — RFC Index
 
 Every RFC lives here. Format: [`0000-template.md`](0000-template.md) (each RFC uses the same
 skeleton). Filename: `<NNNN>-<kebab-name>.md`. RFCs are written in English, as engineering
@@ -39,7 +39,7 @@ forward-looking design, but implementation is postponed until their phase.
 ```
 
 ## Source documents (what the RFCs build on)
-- [SPLASH-OVERVIEW](../SPLASH-OVERVIEW.md) — what the project is
+- [NORTADA-OVERVIEW](../NORTADA-OVERVIEW.md) — what the project is
 - [decisions](../decisions.md) — decision log (D-001..)
 - [reference/brandscale-architecture](../reference/brandscale-architecture.md) — architecture template
 - [activity-data-model](../activity-data-model.md) — session data model

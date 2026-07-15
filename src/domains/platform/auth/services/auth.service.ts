@@ -25,8 +25,8 @@ const REFRESH_TOKEN_TTL_SEC = 60 * 24 * 60 * 60;
 const ANONYMOUS_TOKEN_TYPE = "anonymous";
 // Fixed issuer/audience — asserted on verify so `AUTH_ANONYMOUS_JWT_SECRET`
 // can't be cross-purposed into a token another part of the system would accept.
-const ANONYMOUS_TOKEN_ISSUER = "splash-anon";
-const ANONYMOUS_TOKEN_AUDIENCE = "splash-api";
+const ANONYMOUS_TOKEN_ISSUER = "nortada-anon";
+const ANONYMOUS_TOKEN_AUDIENCE = "nortada-api";
 
 // Refresh tokens are opaque high-entropy strings stored HASHED — the raw value
 // exists only in transit and in the client Keychain.

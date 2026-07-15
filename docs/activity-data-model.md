@@ -1,4 +1,4 @@
-# Splash — Activity (Session) Veri Modeli
+# Nortada — Activity (Session) Veri Modeli
 
 *Kullanıcının tam aktivite spec'inin backend'e uygun, sadeleştirilmiş ve fazlanmış hâli. İki tasarım hamlesi: (1) katmanlı depolama (raw/derived/correction/context) tablo yapısına maplenir; (2) tekrarlayan spor bölümleri **paylaşılan primitiflere** indirilir — spor davranışı `sport_definition`'daki modül listesinden gelir, historik veriyi yeniden yazmaya gerek kalmaz. [[metrics-catalog]] A ailesini bu belge detaylandırır; birim politikası [[decisions]] D-06.*
 

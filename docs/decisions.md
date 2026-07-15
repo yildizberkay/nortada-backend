@@ -1,6 +1,6 @@
-# Splash Backend — Karar Log'u (ADR)
+# Nortada Backend — Karar Log'u (ADR)
 
-*Backend'i kurarken alınan kararların çalışan kaydı. En güncel üstte. Tartışma bağlamı: [[SPLASH-OVERVIEW]], [[metrics-catalog]], [[reference/brandscale-architecture]].*
+*Backend'i kurarken alınan kararların çalışan kaydı. En güncel üstte. Tartışma bağlamı: [[NORTADA-OVERVIEW]], [[metrics-catalog]], [[reference/brandscale-architecture]].*
 
 ---
 

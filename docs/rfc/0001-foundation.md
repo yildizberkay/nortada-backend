@@ -16,7 +16,7 @@
 
 ## 1. Summary
 
-This RFC establishes the running skeleton of the Splash backend: a TypeScript service on
+This RFC establishes the running skeleton of the Nortada backend: a TypeScript service on
 **Hono + Drizzle ORM + PostgreSQL (`pg`) + Zod v4 + Trigger.dev**, deployed (target) on
 Railway, following the layered, bounded-context patterns proven in the reference codebase
 ([[reference/brandscale-architecture]]). It defines the layer contract (`route → service →
@@ -31,7 +31,7 @@ foundation without modifying it.
 
 ## 2. Motivation & Context
 
-- **Problem.** The iOS app ([[../SPLASH-OVERVIEW]]) ships with sample data and needs a real
+- **Problem.** The iOS app ([[../NORTADA-OVERVIEW]]) ships with sample data and needs a real
   backend. Before any feature domain can exist, the project needs a proven, opinionated
   skeleton: layering rules, a DB access pattern, error/response envelopes, config
   validation, background-job wiring, and a test harness — all consistent so that ~9 feature
@@ -39,14 +39,14 @@ foundation without modifying it.
 - **Background.** The reference backend ([[reference/brandscale-architecture]]) is a
   battle-tested Hono/Drizzle service; we adopt its layer contract, bucket rules, base
   classes, and error model wholesale. Stack decisions are recorded in [[decisions]] (D-002
-  Clerk) and summarized in [[splash-backend-decisions]].
+  Clerk) and summarized in [[nortada-backend-decisions]].
 - **Goals.**
   - A layered domain architecture with type-level and grep-level enforcement of the layer
     and bucket boundaries.
   - A DI approach that is easy to read and extend (the reference's central container was the
     one thing the team found hard to follow).
   - Cross-cutting infrastructure: typed + validated config, structured logging, a
-    `GenericError` model with a Splash-specific status map, `{ data }` / `{ error, … }`
+    `GenericError` model with a Nortada-specific status map, `{ data }` / `{ error, … }`
     envelopes, an OpenAPI/Swagger surface in dev, and a Drizzle DB manager that works for
     both the HTTP process and Trigger workers.
   - `GET /health` (liveness) and `GET /health/ready` (readiness) for the platform.
@@ -142,7 +142,7 @@ feature` imports and DB access outside `repositories/`).
 
 **DI simplification — domain modules instead of a central factory.** The reference keeps one
 `ServiceContainer` with 40+ lazy getters (private-repo/public-service split, `??=`
-memoization, `dbManager` threaded into every getter) — powerful but hard to read. Splash
+memoization, `dbManager` threaded into every getter) — powerful but hard to read. Nortada
 instead has each domain wire itself:
 
 ```typescript
@@ -216,7 +216,7 @@ them (first one: RFC-0004 OSM ingest).
 ## 10. Security & Privacy
 
 - **Error codes.** `UNAUTHENTICATED` (401) / `FORBIDDEN` (403) — never `UNAUTHORIZED`.
-  `ALREADY_EXISTS` → **409** (a deliberate Splash delta from the reference's 422 —
+  `ALREADY_EXISTS` → **409** (a deliberate Nortada delta from the reference's 422 —
   [[../otonom-kararlar]] §1). The full `ErrorCode` union and its `statusCodeMap` live in
   `src/packages/error`.
 - **`GenericError` is a pure constructor** — it performs no logging side effects. The
@@ -303,5 +303,5 @@ them (first one: RFC-0004 OSM ingest).
 
 ## 17. References
 
-[[reference/brandscale-architecture]] · [[decisions]] · [[splash-backend-decisions]] ·
-[[../SPLASH-OVERVIEW]]
+[[reference/brandscale-architecture]] · [[decisions]] · [[nortada-backend-decisions]] ·
+[[../NORTADA-OVERVIEW]]

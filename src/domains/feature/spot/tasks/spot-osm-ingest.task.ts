@@ -14,7 +14,7 @@ import {
 } from "./spot-osm-ingest.schema";
 
 /**
- * First Trigger.dev task — the canonical pattern for Splash: initialize config,
+ * First Trigger.dev task — the canonical pattern for Nortada: initialize config,
  * build a per-task DB graph, run the service, always reset the pool in
  * `finally`. Fetches a country's watersports POIs from OSM Overpass and seeds
  * pending spots for admin curation (RFC-0004 §7).

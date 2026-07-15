@@ -3,20 +3,20 @@
 services:
   db:
     image: postgres:17-alpine
-    container_name: splash-postgres
+    container_name: nortada-postgres
     environment:
-      POSTGRES_USER: splash
-      POSTGRES_PASSWORD: splash
-      POSTGRES_DB: splash
+      POSTGRES_USER: nortada
+      POSTGRES_PASSWORD: nortada
+      POSTGRES_DB: nortada
     ports:
       - "5432:5432"
     volumes:
-      - splash-pgdata:/var/lib/postgresql/data
+      - nortada-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U splash -d splash"]
+      test: ["CMD-SHELL", "pg_isready -U nortada -d nortada"]
       interval: 5s
       timeout: 5s
       retries: 10
 
 volumes:
-  splash-pgdata:
+  nortada-pgdata:
