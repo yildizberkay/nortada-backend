@@ -18,9 +18,9 @@ import { boundingBox, longitudeRanges } from "@/packages/geo";
 
 const EARTH_RADIUS_KM = 6371;
 
-// Explicit read allowlist (never SELECT *). Spot has no sensitive columns today,
-// but this keeps the repo consistent with the rest of the codebase and stops a
-// future private column from silently surfacing.
+// Explicit read allowlist (never SELECT *). `suggestionNotes` is the one
+// moderator-facing column here — it rides every read for the admin queue's
+// sake, and `toSpotResponse` (the only public mapper) deliberately omits it.
 const spotColumns = {
   id: true,
   uid: true,
@@ -39,6 +39,7 @@ const spotColumns = {
   hazards: true,
   source: true,
   osmId: true,
+  suggestionNotes: true,
   status: true,
   onWater: true,
   placeTypes: true,

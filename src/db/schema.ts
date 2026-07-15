@@ -424,6 +424,9 @@ export const spotTable = pgTable(
     source: spotSourceEnum("source").notNull(),
     // OpenStreetMap element id when sourced from OSM — dedupe + update key.
     osmId: text("osm_id"),
+    // The suggester's free-text note for moderators ("launch is behind the
+    // pier…"). Admin list only — NEVER in public responses.
+    suggestionNotes: text("suggestion_notes"),
     status: spotStatusEnum("status").notNull().default("pending"),
     // Geo quality: is the coordinate on/at the water (vs an inland business
     // address). Populated by the attribute-derivation pass; null until computed.

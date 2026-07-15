@@ -41,6 +41,13 @@ export const suggestSpotSchema = z.object({
   locality: z.string().max(100).optional(),
   waterType: z.enum(waterTypeEnum.enumValues).optional(),
   supportedSports: z.array(sport).min(1),
+  // Local knowledge is exactly what a suggester has — stored on the same
+  // curated columns; moderation can refine before publishing.
+  goodWindDirections: z.array(compass).max(16).optional(),
+  riskyWindDirections: z.array(compass).max(16).optional(),
+  // Moderator-facing free text ("launch is behind the pier…"). Never echoed
+  // in public responses.
+  notes: z.string().max(500).optional(),
 });
 export type SuggestSpotInput = z.infer<typeof suggestSpotSchema>;
 
@@ -122,3 +129,15 @@ export const spotListResponseSchema = z
   .object({ spots: z.array(spotResponseSchema) })
   .describe("A list of spots")
   .meta({ ref: "SpotListResponse" });
+
+// The moderation queue is the ONE surface that carries the suggester's note —
+// public spot responses must never leak moderator-facing text.
+export const adminSpotListResponseSchema = z
+  .object({
+    spots: z.array(
+      spotResponseSchema.extend({ suggestionNotes: z.string().nullable() }),
+    ),
+  })
+  .describe("Spots for moderation, with the suggester's note")
+  .meta({ ref: "AdminSpotListResponse" });
+export type AdminSpotListResponse = z.infer<typeof adminSpotListResponseSchema>;

@@ -130,6 +130,11 @@ export class SpotService extends BaseUseCase {
       locality: input.locality ?? null,
       waterType: input.waterType ?? null,
       supportedSports: input.supportedSports,
+      // The suggester's local knowledge lands on the curated columns —
+      // moderation refines them before publishing.
+      goodWindDirections: input.goodWindDirections ?? null,
+      riskyWindDirections: input.riskyWindDirections ?? null,
+      suggestionNotes: input.notes ?? null,
       source: "user_suggested",
       status: "pending",
       createdBy: user.id,
@@ -137,12 +142,16 @@ export class SpotService extends BaseUseCase {
     return toSpotResponse(spot);
   }
 
+  /** Moderation queue rows — the one response carrying `suggestionNotes`. */
   async listByStatus(
     status: Spot["status"],
     limit: number,
-  ): Promise<SpotResponse[]> {
+  ): Promise<Array<SpotResponse & { suggestionNotes: string | null }>> {
     const rows = await this.spotRepository.listByStatus(status, limit);
-    return rows.map(toSpotResponse);
+    return rows.map((row) => ({
+      ...toSpotResponse(row),
+      suggestionNotes: row.suggestionNotes,
+    }));
   }
 
   /** Admin: enqueue an OSM ingest for a country → returns the Trigger run id. */

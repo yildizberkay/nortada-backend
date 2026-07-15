@@ -10,6 +10,7 @@ import { successResponseSchema } from "@/packages/route-utils/openapi.schemas";
 import type { HonoContext } from "@/types";
 
 import {
+  adminSpotListResponseSchema,
   adminSpotQuerySchema,
   favoriteSpotSchema,
   favoriteUidParamSchema,
@@ -107,7 +108,7 @@ adminSpotRoute.get(
   describeRoute({
     operationId: "listSpotsForModeration",
     tags: ["admin"],
-    responses: jsonResponse(successResponseSchema(spotListResponseSchema)),
+    responses: jsonResponse(successResponseSchema(adminSpotListResponseSchema)),
   }),
   zValidator("query", adminSpotQuerySchema),
   async (c) => {

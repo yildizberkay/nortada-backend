@@ -29,6 +29,13 @@
       "when": 1784101281471,
       "tag": "0003_high_randall",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784116409031,
+      "tag": "0004_careful_vindicator",
+      "breakpoints": true
     }
   ]
 }

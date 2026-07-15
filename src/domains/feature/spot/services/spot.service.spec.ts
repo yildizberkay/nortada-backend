@@ -41,6 +41,7 @@ const spotRow = (overrides: Partial<Spot> = {}): Spot =>
     hazards: null,
     source: "curated",
     osmId: null,
+    suggestionNotes: null,
     status: "published",
     createdBy: null,
     createdAt: new Date(),
@@ -164,6 +165,42 @@ describe("SpotService", () => {
           supportedSports: ["kitesurf"],
         }),
       );
+    });
+
+    it("persists the suggester's directions and notes", async () => {
+      mockRepo.create.mockImplementation(async (v) =>
+        spotRow({ ...(v as Partial<Spot>), uid: "new" }),
+      );
+
+      const result = await service.suggest(user, {
+        name: "New Spot",
+        latitude: 40,
+        longitude: 27,
+        supportedSports: ["kitesurf"],
+        goodWindDirections: ["NW", "WNW"],
+        riskyWindDirections: ["S"],
+        notes: "Launch behind the pier; shallows on the east side.",
+      });
+
+      expect(mockRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          goodWindDirections: ["NW", "WNW"],
+          riskyWindDirections: ["S"],
+          suggestionNotes: "Launch behind the pier; shallows on the east side.",
+        }),
+      );
+      // The public response must not leak the moderator-facing note.
+      expect(result).not.toHaveProperty("suggestionNotes");
+    });
+  });
+
+  describe("listByStatus", () => {
+    it("carries suggestionNotes for the moderation queue", async () => {
+      mockRepo.listByStatus.mockResolvedValue([
+        spotRow({ suggestionNotes: "check access road" }),
+      ]);
+      const rows = await service.listByStatus("pending", 50);
+      expect(rows[0]?.suggestionNotes).toBe("check access road");
     });
   });
 

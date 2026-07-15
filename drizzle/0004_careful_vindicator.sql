@@ -1,0 +1,1 @@
+ALTER TABLE "watersport_spot" ADD COLUMN "suggestion_notes" text;
