@@ -217,6 +217,7 @@ Routes mount at `/v1/activities` and `/v1/equipment`.
 | DELETE | `/v1/activities/:uid`   | user | Delete an activity (children cascade)          |
 | GET    | `/v1/equipment`         | user | List the user's equipment library              |
 | POST   | `/v1/equipment`         | user | Create an equipment profile                    |
+| DELETE | `/v1/equipment/:uid`    | user | Remove an equipment profile (owner only)       |
 
 ### POST /v1/activities — upload
 
@@ -273,12 +274,16 @@ Routes mount at `/v1/activities` and `/v1/equipment`.
 - **Response:** `204`. Deleting the `activity` row cascades to track/condition/summary/route/
   effort/equipment children. **Errors:** `NOT_FOUND` (404).
 
-### GET / POST /v1/equipment
+### GET / POST / DELETE /v1/equipment
 
 - **GET** → `{ data: { equipment: [...] } }` (`EquipmentListResponse`), each
   `{ uid, type, name, attributes }`, newest first.
 - **POST** `createEquipmentSchema` — `{ type, name (1..120), attributes? }` →
   `{ data: EquipmentResponse }`.
+- **DELETE `/:uid`** → 204; `NOT_FOUND` (404) when the uid doesn't exist or
+  belongs to another user (indistinguishable, same as activities). Sessions
+  that referenced it keep their `activity_equipment` snapshots — deletion
+  removes the library entry, never recorded history.
 
 ## 7. Services & Business Logic
 

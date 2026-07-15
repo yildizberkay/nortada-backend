@@ -15,6 +15,7 @@ const user: RequestUser = {
 const mockRepo = {
   create: jest.fn(),
   listByUser: jest.fn(),
+  deleteByUidForUser: jest.fn(),
 } as unknown as jest.Mocked<EquipmentRepository>;
 
 describe("EquipmentService", () => {
@@ -57,5 +58,18 @@ describe("EquipmentService", () => {
     const result = await service.list(user);
     expect(result.equipment).toHaveLength(1);
     expect(result.equipment[0].uid).toBe("eq-1");
+  });
+
+  it("deletes an owned entry", async () => {
+    mockRepo.deleteByUidForUser.mockResolvedValue(true);
+    await expect(service.delete(user, "eq-1")).resolves.toBeUndefined();
+    expect(mockRepo.deleteByUidForUser).toHaveBeenCalledWith("eq-1", 1);
+  });
+
+  it("404s a missing or foreign uid", async () => {
+    mockRepo.deleteByUidForUser.mockResolvedValue(false);
+    await expect(service.delete(user, "nope")).rejects.toMatchObject({
+      errorCode: "NOT_FOUND",
+    });
   });
 });

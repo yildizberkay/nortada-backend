@@ -82,6 +82,8 @@ export const patchActivitySchema = z.object({
 });
 export type PatchActivityInput = z.infer<typeof patchActivitySchema>;
 
+export const equipmentUidParamSchema = z.object({ uid: z.string().uuid() });
+
 export const createEquipmentSchema = z.object({
   type: z.enum(equipmentTypeEnum.enumValues),
   name: z.string().min(1).max(120),

@@ -24,6 +24,7 @@ import {
   createEquipmentSchema,
   equipmentListResponseSchema,
   equipmentResponseSchema,
+  equipmentUidParamSchema,
   listActivitiesQuerySchema,
   patchActivitySchema,
 } from "../schemas";
@@ -254,5 +255,22 @@ equipmentRoute.post(
       c.req.valid("json"),
     );
     return c.json(HTTPResponse.success(result));
+  },
+);
+
+equipmentRoute.delete(
+  "/:uid",
+  describeRoute({
+    operationId: "deleteEquipment",
+    tags: ["equipment"],
+    responses: { 204: { description: "Removed" } },
+  }),
+  zValidator("param", equipmentUidParamSchema),
+  async (c) => {
+    await getContainer().equipmentService.delete(
+      c.var.user,
+      c.req.valid("param").uid,
+    );
+    return c.body(null, 204);
   },
 );

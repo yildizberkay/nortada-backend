@@ -51,6 +51,20 @@ export class EquipmentRepository extends BaseRepository {
     });
   }
 
+  /** Owner-scoped delete → true when a row was removed. */
+  async deleteByUidForUser(uid: string, userId: number): Promise<boolean> {
+    const rows = await this.dbClient
+      .delete(equipmentProfileTable)
+      .where(
+        and(
+          eq(equipmentProfileTable.uid, uid),
+          eq(equipmentProfileTable.userId, userId),
+        ),
+      )
+      .returning({ id: equipmentProfileTable.id });
+    return rows.length > 0;
+  }
+
   /** Merge hook (D-008): move the user's equipment to the target account. */
   async reassignOwner(
     fromUserId: number,
