@@ -20,6 +20,7 @@
     "db:studio": "drizzle-kit studio",
     "env:gen": "cp .env.sample .env",
     "trigger:dev": "npx trigger.dev@latest dev",
+    "spot:curate": "tsx --env-file=.env tools/spot-curator.ts",
     "test": "jest --silent",
     "test:verbose": "jest",
     "test:watch": "jest --watch",
