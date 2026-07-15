@@ -78,14 +78,41 @@ export interface Logger {
   silly(message: string, data?: unknown): void;
 }
 
+// `Error` props are non-enumerable, so a raw Error inside `data` JSON-serializes
+// to `{}` and the log loses the one thing it was for. Flatten errors (top level
+// or one level deep) into plain {name, message, stack, cause} objects.
+const serializeError = (error: Error): Record<string, unknown> => ({
+  name: error.name,
+  message: error.message,
+  stack: error.stack,
+  ...(error.cause !== undefined
+    ? {
+        cause: error.cause instanceof Error ? error.cause.message : error.cause,
+      }
+    : {}),
+});
+
+const normalizeData = (data: unknown): unknown => {
+  if (data instanceof Error) return serializeError(data);
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+      out[key] = value instanceof Error ? serializeError(value) : value;
+    }
+    return out;
+  }
+  return data;
+};
+
 export function createLogger(prefix: string): Logger {
   const child = root.child({ prefix });
 
-  const log = (logLevel: LogLevel, message: string, data?: unknown) => {
+  const log = (logLevel: LogLevel, message: string, rawData?: unknown) => {
     const pinoLevel = PINO_LEVEL[logLevel];
     if (!child.isLevelEnabled(pinoLevel)) {
       return;
     }
+    const data = rawData === undefined ? undefined : normalizeData(rawData);
 
     // Trigger.dev runs also mirror the line into the run's structured log
     // viewer (stdout alone doesn't surface there with levels intact).
