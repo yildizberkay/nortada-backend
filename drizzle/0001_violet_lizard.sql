@@ -1,1 +1,0 @@
-ALTER TYPE "public"."sport" ADD VALUE 'surfing';

@@ -10,7 +10,8 @@ CREATE TYPE "public"."effort_type" AS ENUM('time_2s', 'time_5s', 'time_10s', 'ti
 CREATE TYPE "public"."equipment_type" AS ENUM('board', 'sail', 'wing', 'kite', 'foil', 'boat', 'sup', 'kayak', 'paddle', 'generic');--> statement-breakpoint
 CREATE TYPE "public"."experience_level" AS ENUM('beginner', 'intermediate', 'advanced', 'racing');--> statement-breakpoint
 CREATE TYPE "public"."main_goal" AS ENUM('find_days', 'track_sessions', 'improve_speed', 'improve_technique', 'consistency', 'racing', 'explore');--> statement-breakpoint
-CREATE TYPE "public"."sport" AS ENUM('windsurf', 'wingfoil', 'sailing', 'kitesurf', 'sup', 'kayak', 'other');--> statement-breakpoint
+CREATE TYPE "public"."place_type" AS ENUM('public_spot', 'school', 'rental', 'club', 'center', 'marina', 'accommodation', 'shop');--> statement-breakpoint
+CREATE TYPE "public"."sport" AS ENUM('windsurf', 'wingfoil', 'sailing', 'kitesurf', 'sup', 'kayak', 'other', 'surfing');--> statement-breakpoint
 CREATE TYPE "public"."spot_skill" AS ENUM('beginner', 'intermediate', 'advanced', 'all');--> statement-breakpoint
 CREATE TYPE "public"."spot_source" AS ENUM('osm', 'curated', 'user_suggested');--> statement-breakpoint
 CREATE TYPE "public"."spot_status" AS ENUM('published', 'pending', 'rejected');--> statement-breakpoint
@@ -189,7 +190,10 @@ CREATE TABLE "watersport_spot" (
 	"hazards" text[],
 	"source" "spot_source" NOT NULL,
 	"osm_id" text,
+	"suggestion_notes" text,
 	"status" "spot_status" DEFAULT 'pending' NOT NULL,
+	"on_water" boolean,
+	"place_types" "place_type"[],
 	"created_by" integer,
 	"created_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
@@ -258,6 +262,27 @@ CREATE TABLE "weather_cache" (
 	CONSTRAINT "weather_cache_uid_unique" UNIQUE("uid")
 );
 --> statement-breakpoint
+CREATE TABLE "weather_map_frame" (
+	"id" integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "weather_map_frame_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 START WITH 1 CACHE 1),
+	"uid" text DEFAULT gen_random_uuid() NOT NULL,
+	"model" text NOT NULL,
+	"layer" text NOT NULL,
+	"valid_time" timestamp (3) with time zone NOT NULL,
+	"run_time" timestamp (3) with time zone NOT NULL,
+	"object_key" text NOT NULL,
+	"width" integer NOT NULL,
+	"height" integer NOT NULL,
+	"west" double precision NOT NULL,
+	"south" double precision NOT NULL,
+	"east" double precision NOT NULL,
+	"north" double precision NOT NULL,
+	"scales" jsonb NOT NULL,
+	"rendered_at" timestamp (3) with time zone NOT NULL,
+	"created_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "weather_map_frame_uid_unique" UNIQUE("uid")
+);
+--> statement-breakpoint
 CREATE TABLE "weather_model_meta" (
 	"id" integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "weather_model_meta_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 START WITH 1 CACHE 1),
 	"uid" text DEFAULT gen_random_uuid() NOT NULL,
@@ -304,4 +329,5 @@ CREATE UNIQUE INDEX "user_clerk_user_id_key" ON "user" USING btree ("clerk_user_
 CREATE UNIQUE INDEX "user_anonymous_device_id_key" ON "user" USING btree ("anonymous_device_id") WHERE "user"."anonymous_device_id" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "user_merged_into_user_id_idx" ON "user" USING btree ("merged_into_user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "weather_cache_spot_kind_key" ON "weather_cache" USING btree ("spot_uid","kind");--> statement-breakpoint
-CREATE INDEX "weather_cache_expires_at_idx" ON "weather_cache" USING btree ("expires_at");
+CREATE INDEX "weather_cache_expires_at_idx" ON "weather_cache" USING btree ("expires_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "weather_map_frame_model_layer_valid_idx" ON "weather_map_frame" USING btree ("model","layer","valid_time");

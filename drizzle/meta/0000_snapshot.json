@@ -1,5 +1,5 @@
 {
-  "id": "c49ee23c-1dc4-4831-bf35-594f150798ec",
+  "id": "fe826ded-a8a5-4b99-9697-53ca7572161e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1499,6 +1499,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "suggestion_notes": {
+          "name": "suggestion_notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "status": {
           "name": "status",
           "type": "spot_status",
@@ -1506,6 +1512,19 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'pending'"
+        },
+        "on_water": {
+          "name": "on_water",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "place_types": {
+          "name": "place_types",
+          "type": "place_type[]",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_by": {
           "name": "created_by",
@@ -2193,6 +2212,171 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.weather_map_frame": {
+      "name": "weather_map_frame",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "weather_map_frame_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "uid": {
+          "name": "uid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "layer": {
+          "name": "layer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valid_time": {
+          "name": "valid_time",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_time": {
+          "name": "run_time",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "object_key": {
+          "name": "object_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "width": {
+          "name": "width",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "height": {
+          "name": "height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "west": {
+          "name": "west",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "south": {
+          "name": "south",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "east": {
+          "name": "east",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "north": {
+          "name": "north",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scales": {
+          "name": "scales",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rendered_at": {
+          "name": "rendered_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "weather_map_frame_model_layer_valid_idx": {
+          "name": "weather_map_frame_model_layer_valid_idx",
+          "columns": [
+            {
+              "expression": "model",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "layer",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "valid_time",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "weather_map_frame_uid_unique": {
+          "name": "weather_map_frame_uid_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "uid"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.weather_model_meta": {
       "name": "weather_model_meta",
       "schema": "",
@@ -2433,6 +2617,20 @@
         "explore"
       ]
     },
+    "public.place_type": {
+      "name": "place_type",
+      "schema": "public",
+      "values": [
+        "public_spot",
+        "school",
+        "rental",
+        "club",
+        "center",
+        "marina",
+        "accommodation",
+        "shop"
+      ]
+    },
     "public.sport": {
       "name": "sport",
       "schema": "public",
@@ -2443,7 +2641,8 @@
         "kitesurf",
         "sup",
         "kayak",
-        "other"
+        "other",
+        "surfing"
       ]
     },
     "public.spot_skill": {
