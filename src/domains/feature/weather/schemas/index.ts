@@ -45,6 +45,10 @@ const freshnessSchema = z.object({
   fetchedAt: z.iso.datetime(),
   modelRun: z.iso.datetime().nullable(),
   stale: z.boolean(),
+  // Display-ready provenance ("Open-Meteo" / "ICON") — attribution footnotes
+  // must come from the data's producer, never be hardcoded client-side.
+  source: z.string(),
+  model: z.string(),
 });
 
 const bestWindowSchema = z

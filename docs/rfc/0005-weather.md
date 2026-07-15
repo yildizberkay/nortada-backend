@@ -115,9 +115,11 @@ number-in/verdict-out, so its safety logic is exhaustively unit-testable.
   *before* the storm code appears.
 - **Kind.** The cache partition: `forecast` (atmosphere) vs `marine` (sea). `pgEnum`
   `weather_kind`.
-- **Freshness.** `{ fetchedAt, modelRun, stale }` — when we fetched, which model run produced
-  the data, and whether our copy is stale (fetch failed, or aged past the model's update
-  interval).
+- **Freshness.** `{ fetchedAt, modelRun, stale, source, model }` — when we fetched, which
+  model run produced the data, whether our copy is stale (fetch failed, or aged past the
+  model's update interval), and display-ready provenance (`source` "Open-Meteo", `model`
+  "ICON") so client attribution footnotes can never drift from the model actually served
+  (the client previously hardcoded both).
 - **Hot set.** The spots worth refreshing on a cadence (D-004) = favorited published spots
   today (active alarms → RFC-0008, recently-viewed → P1). Everything else is fetched lazily on
   first request.

@@ -6,6 +6,8 @@ import { windSide } from "@/packages/geo";
 import { createLogger } from "@/packages/logger";
 import {
   FORECAST_MODEL,
+  FORECAST_MODEL_DISPLAY,
+  FORECAST_SOURCE_DISPLAY,
   type ForecastPayload,
   type MarinePayload,
   type WeatherProvider,
@@ -265,6 +267,10 @@ export class WeatherService extends BaseUseCase {
       fetchedAt: fc.fetchedAt.toISOString(),
       modelRun: meta.lastRun ? meta.lastRun.toISOString() : null,
       stale: fc.stale || agedOut,
+      // Provenance rides every response so client attribution footnotes can
+      // never drift from the model actually served (RFC-0005).
+      source: FORECAST_SOURCE_DISPLAY,
+      model: FORECAST_MODEL_DISPLAY,
     };
   }
 

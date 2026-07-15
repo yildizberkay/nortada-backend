@@ -106,6 +106,10 @@ const FORECAST_CURRENT = [
 // make the "updated Xm ago / model run" story inconsistent). `icon_seamless` is
 // ICON global+EU stitched — solid for the Aegean beachhead. See otonom-kararlar.
 export const FORECAST_MODEL = "icon_seamless";
+// Display-ready provenance for client attribution footnotes — lives NEXT TO
+// the pinned model so a model switch can't leave the label behind.
+export const FORECAST_SOURCE_DISPLAY = "Open-Meteo";
+export const FORECAST_MODEL_DISPLAY = "ICON";
 
 const FORECAST_DAILY = ["sunrise", "sunset"].join(",");
 
