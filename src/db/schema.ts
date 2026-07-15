@@ -68,6 +68,8 @@ export const sportEnum = pgEnum("sport", [
   "sup",
   "kayak",
   "other",
+  // Appended for spot sourcing (wave surfing). Enum order is not significant.
+  "surfing",
 ]);
 
 export const experienceLevelEnum = pgEnum("experience_level", [
@@ -170,6 +172,20 @@ export const spotStatusEnum = pgEnum("spot_status", [
   "published",
   "pending",
   "rejected",
+]);
+
+// Multi-valued venue type — a place can be several at once (a school on a public
+// beach = [public_spot, school]). `public_spot` = freely go-able water access;
+// the rest are services/POIs. Distinct from geo quality (`onWater`).
+export const placeTypeEnum = pgEnum("place_type", [
+  "public_spot",
+  "school",
+  "rental",
+  "club",
+  "center",
+  "marina",
+  "accommodation",
+  "shop",
 ]);
 
 // ─── weather enums (RFC-0005) ────────────────────────────────────────────────
@@ -409,6 +425,11 @@ export const spotTable = pgTable(
     // OpenStreetMap element id when sourced from OSM — dedupe + update key.
     osmId: text("osm_id"),
     status: spotStatusEnum("status").notNull().default("pending"),
+    // Geo quality: is the coordinate on/at the water (vs an inland business
+    // address). Populated by the attribute-derivation pass; null until computed.
+    onWater: boolean("on_water"),
+    // Venue-type tags — what kind of place this is (spot vs school vs rental…).
+    placeTypes: placeTypeEnum("place_types").array(),
     createdBy: integer("created_by").references(() => userTable.id),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),

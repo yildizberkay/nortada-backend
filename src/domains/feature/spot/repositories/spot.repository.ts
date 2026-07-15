@@ -40,6 +40,8 @@ const spotColumns = {
   source: true,
   osmId: true,
   status: true,
+  onWater: true,
+  placeTypes: true,
   createdBy: true,
   createdAt: true,
   updatedAt: true,
