@@ -44,7 +44,7 @@ sıradaki oturumda eklerim. Aksi halde bunlar bir sonraki faz.
 
 **Neden:** brandscale kodda 422 kullanmış ama kendi dökümanı 409 diyordu;
 409 semantik olarak "kaynak zaten var / çakışma" için doğru olan. Bu zaten
-`docs/architecture.md` ve `CLAUDE.md`'de Splash deltası olarak yazılıydı;
+`docs/architecture.md` ve `CLAUDE.md`'de Nortada deltası olarak yazılıydı;
 kod da ona uyuyor.
 
 **Örnek:** anonim kullanıcı zaten Clerk hesabına bağlıyken tekrar `/link`
@@ -116,7 +116,7 @@ skill'i kurulu; ama koda özel bir bağımlılık koymadım — standart Node + 
 **Karar:** Tüm `created_at`/`updated_at` kolonları `timestamp(..., { withTimezone: true })`
 (Postgres `timestamptz`), UTC. brandscale düz `timestamp` kullanıyordu.
 
-**Neden:** Splash global; hava tahmini ve seans zamanları farklı saat dilimlerinden
+**Neden:** Nortada global; hava tahmini ve seans zamanları farklı saat dilimlerinden
 UTC olarak akıyor. `timestamptz` ofset karmaşasını kökten engeller; okuma tarafında
 client dönüştürür (D-006 birim mantığıyla tutarlı).
 
@@ -214,7 +214,7 @@ edebilirdi. Bu grep o kaçağı da kapatır (principal-architect review MEDIUM).
 ## 13. Anonim JWT: uzun ömür + iss/aud + retired-row revocation ✅
 
 **Karar:** Anonim token HS256, `sub=user.uid`, `tokenType:"anonymous"`,
-`iss:"splash-anon"`, `aud:"splash-api"`, TTL **365 gün**. Doğrulamada alg HS256'ya
+`iss:"nortada-anon"`, `aud:"nortada-api"`, TTL **365 gün**. Doğrulamada alg HS256'ya
 sabitli, iss+aud assert ediliyor.
 
 **Neden:** Token cihaz Keychain'inde uzun yaşamalı (anonim kullanıcı yeniden
@@ -240,9 +240,13 @@ frontend için üretildiğini doğrular; (b) `jwtKey` her isteği canlı JWKS
 fetch'ine bağlamaktan kurtarır (Clerk outage'ında tüm auth çökmesin); (c) bir
 Clerk outage'ının 401 "geçersiz token" gibi görünüp ops'u kör etmesi engellenir.
 
-**Onayın gerekli:** Prod'da `CLERK_JWT_KEY`'i Clerk dashboard'dan al (API keys →
-JWT public key) ve `CLERK_AUTHORIZED_PARTIES`'i app origin/bundle ile doldur.
-Şimdilik native-only olduğu için boşken de çalışır (secretKey'e düşer).
+**Onayın gerekli:** Prod'da `CLERK_AUTHORIZED_PARTIES`'i app origin/bundle ile
+doldur. Şimdilik native-only olduğu için boşken de çalışır.
+
+**Revizyon (2026-07-15, kullanıcı kararı):** `jwtKey`/`CLERK_JWT_KEY` yolu
+kaldırıldı — Clerk client'ı JWKS'i zaten process başına bir kez çekip
+cache'lediği için networkless yolun getirisi marjinaldi; tek doğrulama yolu +
+daha az config tercih edildi. Doğrulama artık yalnız `secretKey` ile.
 
 ## 15. Provisioning + link yarış koşulları: idempotent + fallthrough ✅ (review-driven)
 

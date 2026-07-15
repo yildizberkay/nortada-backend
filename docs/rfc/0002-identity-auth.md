@@ -16,7 +16,7 @@
 
 ## 1. Summary
 
-This RFC gives every Splash request a single, uniform identity. Two very different
+This RFC gives every Nortada request a single, uniform identity. Two very different
 credential sources feed one abstraction: **anonymous devices** carry a thin, device-bound JWT
 that the `auth` domain mints and verifies itself (backed by an `is_anonymous` row in the
 `user` table), while **signed-in users** carry a **Clerk** session token (native iOS/watchOS
@@ -47,14 +47,13 @@ equipment) is moved inside **one transaction** via a per-domain `MergeReassigner
   `c.var.user`. The stack decision (Clerk + our own thin anonymous JWT) is [[decisions]] D-002;
   the merge-reassign decision is [[decisions]] D-008. The full set of review-driven refinements
   is logged in [[../otonom-kararlar]] §13–§19 (and §22, where the merge seam was actually built
-  with the first owned data). Product context: [[../SPLASH-OVERVIEW]].
+  with the first owned data). Product context: [[../NORTADA-OVERVIEW]].
 - **Goals.**
   - A `user` table that holds anonymous devices and real Clerk logins in one shape, so
     `c.var.user` is uniform.
   - A stateless, **short-lived access + rotating refresh** low-privilege **anonymous JWT** system
     we sign/verify ourselves (D-009).
-  - **Clerk** token verification, preferring networkless verification, provisioning a `user` row
-    on first sight.
+  - **Clerk** token verification, provisioning a `user` row on first sight.
   - A **dual-source** `authenticate` middleware and an optional-user context variant.
   - An **anonymous → Clerk link/merge** flow that never loses a user's real data and is safe
     under the concurrency an iOS cold-launch produces.
@@ -375,9 +374,10 @@ MergeReassigner[] = [])`. The reassigners are injected at the composition root (
 ### `ClerkService`
 
 A thin wrapper over `@clerk/backend`'s `verifyToken`, isolated so the Clerk boundary is mockable.
-Reads secrets at **call time** (`this.config.clerk`), not in the constructor. Prefers
-**networkless** verification (`jwtKey`) over `secretKey`, and passes `authorizedParties` (azp)
-when configured. If neither key is present ⇒ `UNAUTHENTICATED` / `CLERK_NOT_CONFIGURED`. The
+Reads secrets at **call time** (`this.config.clerk`), not in the constructor. Verifies via
+`secretKey` (Clerk's client fetches JWKS once per process and caches it), and passes
+`authorizedParties` (azp) when configured. If the secret key is absent ⇒ `UNAUTHENTICATED` /
+`CLERK_NOT_CONFIGURED`. The
 critical logic is the **error split**: a `TokenVerificationError` whose reason is in
 `INFRA_FAILURE_REASONS` (JWKS load/resolve/kid failures, `TokenVerificationFailed`,
 `InvalidSecretKey`, …) — or any non-Clerk error (raw network failure) — becomes
@@ -410,8 +410,7 @@ A future retired-*user*-row garbage collector (sweeping long-retired anonymous `
 ## 9. Dependencies & Integrations
 
 - **`@clerk/backend`** — `verifyToken` plus `TokenVerificationError` /
-  `TokenVerificationErrorReason` (the reason enum drives the infra-vs-token split). Verification
-  is networkless when `jwtKey` is set.
+  `TokenVerificationErrorReason` (the reason enum drives the infra-vs-token split).
 - **`jose`** — `SignJWT` / `jwtVerify` / `decodeJwt` for the anonymous HS256 token.
 
 **Anonymous JWT claim set** (mint + assert):
@@ -421,8 +420,8 @@ A future retired-*user*-row garbage collector (sweeping long-retired anonymous `
 | `alg`       | `HS256`          | Pinned on verify (`algorithms: ["HS256"]`).                     |
 | `sub`       | `user.uid`       | The public opaque id, never the integer PK.                     |
 | `tokenType` | `"anonymous"`    | Custom claim; lets the middleware route without a verify round-trip. |
-| `iss`       | `"splash-anon"`  | Asserted on verify.                                             |
-| `aud`       | `"splash-api"`   | Asserted on verify.                                            |
+| `iss`       | `"nortada-anon"`  | Asserted on verify.                                             |
+| `aud`       | `"nortada-api"`   | Asserted on verify.                                            |
 | `iat`/`exp` | now / **15 min** | Short TTL (`ACCESS_TOKEN_TTL_SEC = 900`); the client rotates via `/refresh` before expiry (D-009). Verify uses a 10 s `clockTolerance` for NTP skew. |
 
 **Env vars** (validated by `GlobalConfig`, RFC-0001 fail-fast):
@@ -430,9 +429,8 @@ A future retired-*user*-row garbage collector (sweeping long-retired anonymous `
 | Var                          | Required           | Purpose                                                            |
 | ---------------------------- | ------------------ | ----------------------------------------------------------------- |
 | `AUTH_ANONYMOUS_JWT_SECRET`  | yes                | HS256 signing secret. **Prod gate:** must be ≥ 32 chars (a `superRefine`), relaxed inside the Trigger worker (`TRIGGER_WORKER=true`, which never signs tokens). |
-| `CLERK_SECRET_KEY`           | optional           | Clerk API secret; verification fallback when `jwtKey` is absent.  |
+| `CLERK_SECRET_KEY`           | optional           | Clerk API secret used for token verification.                     |
 | `CLERK_PUBLISHABLE_KEY`      | optional           | Clerk publishable key (client-facing; carried for completeness).  |
-| `CLERK_JWT_KEY`              | optional (prod-preferred) | PEM public key → networkless verification (no per-request JWKS fetch). |
 | `CLERK_AUTHORIZED_PARTIES`   | optional           | Comma-separated azp allow-list; split/trimmed into `string[]`.    |
 
 Clerk config is **optional** so local/dev can boot anonymous-only. iOS uses the Clerk iOS SDK's
@@ -454,8 +452,8 @@ data-owning domains plug into (RFC-0004 favorites, RFC-0006 activities/equipment
   row's token ([[../otonom-kararlar]] §13).
 - **Prod secret gate.** `AUTH_ANONYMOUS_JWT_SECRET` < 32 chars in prod fails config validation at
   boot — a short HS256 key signs forgeable device tokens.
-- **Clerk token posture.** Short-lived + SDK-refreshed. Verification prefers networkless `jwtKey`
-  (so a Clerk/JWKS outage can't take down *all* auth) and asserts azp when configured (the token
+- **Clerk token posture.** Short-lived + SDK-refreshed. Verification uses `secretKey` (JWKS is
+  fetched once per process and cached by Clerk's client) and asserts azp when configured (the token
   was minted for *our* frontend). Infra failure ⇒ reported 5xx; bad token ⇒ silent 401
   ([[../otonom-kararlar]] §14).
 - **Concurrency safety.** Provisioning and linking are idempotent under the parallel requests an
@@ -497,15 +495,14 @@ data-owning domains plug into (RFC-0004 favorites, RFC-0006 activities/equipment
 ## 12. Performance & Scalability
 
 - **Hot path.** `authenticate` runs on nearly every request. Anonymous verify is a local HS256
-  check + one indexed `findByUid` (unique on `uid`). Clerk verify with `jwtKey` is fully
-  networkless (no JWKS round-trip); with `secretKey` only, Clerk's client may fetch JWKS — hence
-  the prod preference for `jwtKey`.
+  check + one indexed `findByUid` (unique on `uid`). Clerk verify fetches JWKS once per process
+  and caches it in memory (a cold start pays one round-trip; steady state is local).
 - **Index cost.** All auth lookups hit unique/partial-unique indexes (`uid`, `clerkUserId`,
   `anonymousDeviceId`) — O(log n) point reads. The merge transaction is small (a handful of
   UPDATEs) and rare (once per device per sign-in).
 - **Statelessness.** Anonymous tokens are stateless (no server session store). The **one**
   intentional piece of process-local state is the in-memory rate-limiter map, explicitly flagged
-  to move to a shared store when Splash runs multiple instances ([[../otonom-kararlar]] §17). The
+  to move to a shared store when Nortada runs multiple instances ([[../otonom-kararlar]] §17). The
   limiter opportunistically sweeps expired buckets so memory stays bounded.
 - **Deferred until it matters.** Retired-row GC and a distributed limiter are both deferred until
   scale demands them.
@@ -528,7 +525,7 @@ Co-located specs, all deps mocked (RFC-0001 test harness injects a mock config s
 - **`clerk.service.spec.ts`** — verified identity (with/without `email`); `CLERK_NOT_CONFIGURED`
   when no key is set (and `verifyToken` not called); the **error split** — `TokenExpired` →
   `INVALID_TOKEN`, `RemoteJWKFailedToLoad` → `CLERK_UNAVAILABLE`, and a raw network error →
-  `CLERK_UNAVAILABLE`; and that `jwtKey`/`secretKey` + `authorizedParties` are threaded into
+  `CLERK_UNAVAILABLE`; and that `secretKey` + `authorizedParties` are threaded into
   `verifyToken`.
 - **Pre-ship gate (RFC-0001):** `lint:biome:fix`, `lint:type`, `lint:imports` (the
   `platform → feature` ban must hold — `auth` importing a feature domain would fail here), `test`.
@@ -578,8 +575,9 @@ Co-located specs, all deps mocked (RFC-0001 test harness injects a mock config s
    `findByAnonymousDeviceId` (live-only), idempotent `createAnonymous` / `createClerkUser`,
    `tryUpgradeAnonymousToClerk` (null on race), `markMergedInto` (retire + free device id),
    `transaction` wrapper; explicit column set + `isUniqueViolation` helper.
-5. ✅ `services/clerk.service.ts` (+ spec) — networkless-preferred verify + infra/token error
-   split.
+5. ✅ `services/clerk.service.ts` (+ spec) — `secretKey` verify + infra/token error split.
+   *(2026-07-15: the optional networkless `jwtKey` path was removed — one verification path,
+   less config; see [[../otonom-kararlar]] §14.)*
 6. ✅ `services/auth.service.ts` (+ spec) — issue/verify/link orchestration, JWT constants +
    claim set.
 7. ✅ `src/types.ts` — `RequestUser`, `MergeReassigner`, `HonoContext<true>` (and `DBExecutor` in
@@ -604,8 +602,9 @@ Co-located specs, all deps mocked (RFC-0001 test harness injects a mock config s
 - ~~Anonymous JWT shape / revocation~~ → HS256, `sub=uid`, `tokenType`/`iss`/`aud`; revoke broadly
   via secret rotation, individually via `mergedIntoUserId` (and, for refresh, `revokeFamily` /
   `revokeAllForUser`) ([[../otonom-kararlar]] §13). ✅
-- ~~Clerk verification hardening~~ → networkless `jwtKey` + `authorizedParties`; infra failures →
-  reported 5xx, token failures → silent 401 ([[../otonom-kararlar]] §14). ✅
+- ~~Clerk verification hardening~~ → `authorizedParties` (azp) assertion; infra failures →
+  reported 5xx, token failures → silent 401 ([[../otonom-kararlar]] §14; the `jwtKey` networkless
+  path shipped there was later removed, 2026-07-15). ✅
 - ~~Provisioning + link race conditions~~ → idempotent `ON CONFLICT DO NOTHING` + re-read; branch-1
   upgrade unique-conflict **falls through** to branch-2 — no 500s ([[../otonom-kararlar]] §15). ✅
 - ~~Retired anonymous row traps the device~~ → `markMergedInto` also **frees `anonymousDeviceId`**,
@@ -632,4 +631,4 @@ Co-located specs, all deps mocked (RFC-0001 test harness injects a mock config s
 [[decisions]] D-002 (Clerk + thin anonymous JWT) · [[decisions]] D-008 (merge: preferences vs
 data) · [[../otonom-kararlar]] §13–§19, §22 · [[reference/brandscale-architecture]] §11
 (`authenticate-app-jwt`) · [[0001-foundation]] (base classes, error/config plumbing, DI) ·
-[[../SPLASH-OVERVIEW]]
+[[../NORTADA-OVERVIEW]]

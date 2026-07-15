@@ -33,14 +33,13 @@ const INFRA_FAILURE_REASONS = new Set<string>([
  * `AuthService` so the Clerk boundary is mockable in unit tests. Reads secrets
  * at call time (not in the constructor) to keep construction cheap.
  *
- * Prefers networkless verification (`jwtKey`) and passes `authorizedParties`
- * (azp) when configured, per Clerk's hardening guidance.
+ * Verifies via `secretKey` (Clerk's client fetches and caches JWKS) and passes
+ * `authorizedParties` (azp) when configured, per Clerk's hardening guidance.
  */
 export class ClerkService extends BaseUseCase {
   async verifyToken(token: string): Promise<ClerkIdentity> {
-    const { secretKey, jwtKey, authorizedParties } = this.config.clerk;
-    // Either a networkless public key OR a secret key must be present.
-    if (!jwtKey && !secretKey) {
+    const { secretKey, authorizedParties } = this.config.clerk;
+    if (!secretKey) {
       throw new GenericError("UNAUTHENTICATED", {
         reason: AuthReason.CLERK_NOT_CONFIGURED,
         message: "Clerk authentication is not configured",
@@ -49,7 +48,7 @@ export class ClerkService extends BaseUseCase {
 
     try {
       const payload = await verifyToken(token, {
-        ...(jwtKey ? { jwtKey } : { secretKey }),
+        secretKey,
         ...(authorizedParties?.length ? { authorizedParties } : {}),
       });
       const email = (payload as { email?: unknown }).email;

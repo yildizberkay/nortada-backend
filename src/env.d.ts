@@ -12,8 +12,6 @@ declare namespace NodeJS {
     // anonymous-only without Clerk configured.
     CLERK_SECRET_KEY?: string;
     CLERK_PUBLISHABLE_KEY?: string;
-    // PEM public key for networkless verification (prod-preferred).
-    CLERK_JWT_KEY?: string;
     // Comma-separated authorized parties (azp) for Clerk session tokens.
     CLERK_AUTHORIZED_PARTIES?: string;
 
