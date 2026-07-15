@@ -239,9 +239,20 @@ schema so new layer kinds never break generated clients.
 `WeatherMapService extends BaseUseCase` (deps: `WeatherMapRepository`,
 `SpatialSource` (`OmSpatialClient`), `ObjectStorage`).
 
-- `refresh(): Promise<RefreshSummary>` — the task entry point. For each
-  active model, independently (one model's failure must not block others;
-  errors are collected into the summary):
+Four pipeline entry points (all sharing the private `planModel()` due-check,
+so "due" has one definition):
+
+- `planRefresh(now)` — the orchestrator's pass: per model, `latest.json` +
+  one frame query → the due list `{ model, referenceTime, dueFrames }[]`.
+  No grid reads. Per-model failures collect into `errors`.
+- `refreshModelById(modelId, now)` — the fan-out child's pass: renders every
+  due frame of ONE model at `CHILD_HOUR_CONCURRENCY`. Throws on model-level
+  failure (the task retry owns recovery); never prunes.
+- `prune(now)` — public; called by the orchestrator each tick and by
+  `refresh()` at the end of a full pass.
+- `refresh(): Promise<RefreshSummary>` — the full in-process pass (force-run
+  task + CLI). For each active model, independently (one model's failure must
+  not block others; errors are collected into the summary):
   1. `latest.json` → `referenceTime`, `validTimes`, bbox. Skip the model if
      `completed !== true`.
   2. Select valid times inside the window `[now - 1h, now + HORIZON]`.
@@ -327,26 +338,68 @@ just invite config drift between environments.
 
 ## 8. Background Jobs (Trigger.dev)
 
-`weathermap-render` (`schedules.task`, cron `*/15 * * * *`, `maxDuration` 900,
-`concurrencyLimit: 1` so overlapping schedules never double-render):
-standard trigger scaffold (`initializeForTrigger` → `createDBManagerForTrigger`
-→ `buildContainer(db).weatherMapService.refresh()` → `finalizeTrigger`),
-task-level errors to `Tracking.captureException`; per-model errors from the
-summary are captured individually (with `{ model }` context) without failing
-the run.
+The cron path is a **fan-out**: a lightweight orchestrator decides which
+models have due work and spawns one render run per due model, each on its own
+machine (design revised 2026-07-15; the original single-task monolith is in
+§14).
+
+### `weathermap-orchestrate` (scheduler)
+
+`schedules.task`, cron `*/15 * * * *`, `maxDuration` 300,
+`concurrencyLimit: 1` (overlapping ticks never double-plan). Standard trigger
+scaffold, then:
+
+1. `weatherMapService.planRefresh()` — per enabled model, one `latest.json`
+   GET + one frame query compute the due (layer, valid time) set. **No grid
+   reads, no rendering** — the plan pass costs seconds. Due-ness is the same
+   `runTime < referenceTime` check the render path uses (shared
+   `planModel()`), so the two can never disagree.
+2. Models with due work → `weathermapRenderModelTask.batchTrigger`, one child
+   per model, with a **global-scoped idempotency key**
+   `weathermap-render-<model>-<referenceTime>` + `idempotencyKeyTTL: "1h"`:
+   re-ticks while a child is still rendering the same run dedupe to the
+   in-flight run (no pile-up during a slow backfill); after the TTL an
+   incomplete render is re-fanned and resumes (frames upsert one by one).
+   Children are tagged `model:<id>` for dashboard filtering.
+3. `prune()` — pruning is the orchestrator's job; children never prune.
+
+Per-model plan failures are captured to tracking (with `{ model }` context)
+without failing the tick.
+
+### `weathermap-render-model` (fan-out child)
+
+`schemaTask`, payload `{ model }`, `machine: "small-2x"`, `maxDuration` 3600,
+`retry.maxAttempts: 3`, `queue.concurrencyLimit: 6`. Calls
+`weatherMapService.refreshModelById(model)`: re-reads `latest.json` (if the
+run advanced since planning, the child renders the newer one) and renders
+every due frame of that one model, with **`CHILD_HOUR_CONCURRENCY = 2`** valid
+hours in flight (overlaps the next hour's range reads with the current hour's
+encode without stacking more than ~2 × 100 MB of grids on the machine).
+
+- The queue limit bounds how many models render at once **across machines** —
+  every child hits the same Open-Meteo archive host, so it is a rate-limit
+  knob, not a memory one (memory is per-machine now).
+- Model-level errors throw → the task's retry owns recovery (there are no
+  sibling models to isolate inside a child). An unknown/disabled model aborts
+  without retrying (`AbortTaskRunError` — the registry changed under a queued
+  run).
+- A child that dies mid-backfill resumes on retry / next orchestration via
+  the per-frame upsert, exactly like the old monolith's tick-resume.
 
 Why 15-min polling instead of aligning to publication calendars: the
 "run advanced?" check is one small `latest.json` GET per model (≈20 requests),
-and `runTime < referenceTime` makes re-renders exactly as frequent as the
+and `runTime < referenceTime` makes child runs exactly as frequent as the
 models themselves update (hourly for ICON-D2/KNMI/HRRR/Nordic, ~3 h ICON-EU,
-~6 h globals). A calendar would save nothing and add drift risk when providers
-shift publication times.
+~6 h globals) — most ticks fan out 0–3 children. A calendar would save nothing
+and add drift risk when providers shift publication times.
 
 ### Force-run (manual task + CLI)
 
-Both share the cron task's `refresh(now, overrides)` — so a force-run after an
-unchanged run is a cheap no-op unless narrowed; overrides can only select
-within the enabled registry.
+Both run the full **in-process** pass `refresh(now, overrides)` (models
+through a bounded pool, hours sequential — unlike the cron path, which fans
+out) and share the run-advance idempotence — so a force-run after unchanged
+runs is a cheap no-op unless narrowed; overrides can only select within the
+enabled registry.
 
 - **`weathermap-render-now`** (`schemaTask`, payload
   `{ models?, layers?, horizonHours? }`, `{}` = one full cron-equivalent
@@ -410,38 +463,50 @@ under `activities/`).
 
 ## 11. Observability
 
-- Task summary log per run: models checked / up-to-date / frames rendered /
-  layer-frames skipped for missing variables / pruned / per-model errors.
+- Orchestrator log per tick: models checked / due list (model + run + due
+  frame count) / plan errors / pruned. Each child run logs its own summary
+  (rendered / missingVariable / frameErrors / layerStats) and is tagged
+  `model:<id>` — per-model history is one dashboard filter.
 - `Tracking.captureException` per failing model with `{ model }` context so
-  one broken feed pages without hiding the other 19.
+  one broken feed pages without hiding the other 19 (plan errors in the
+  orchestrator; render errors in the failing child only).
 - Frame rows carry `renderedAt` + `runTime` — staleness is queryable.
 
 ## 12. Performance & Scalability
 
 Parallelism operates at three levels; bounds are deliberate:
 
-- **Across models** — refreshed through a bounded pool
-  (`MODEL_CONCURRENCY = 4`), not `Promise.all` over all 20: each in-flight
-  model holds its current hour's grids in memory (~100 MB for a global 0.13°
-  hour) and hits the same archive host. 4 keeps a cold-start backfill inside
-  `maxDuration` without memory/rate-limit risk. Error isolation is preserved
-  (a failing model's error folds into the summary; the rest render).
+- **Across models** — the cron path fans out one Trigger.dev run per due
+  model, so models parallelize across MACHINES; `queue.concurrencyLimit: 6`
+  on the child bounds simultaneous renders because every child range-reads
+  the same archive host (a rate-limit bound — memory is per-machine). The
+  in-process paths (`planRefresh`, and `refresh` for force-run/CLI) use a
+  bounded pool (`MODEL_CONCURRENCY = 4`), not `Promise.all` over all 20:
+  in `refresh` each in-flight model holds its current hour's grids in memory
+  (~100 MB for a global 0.13° hour). Error isolation is preserved everywhere
+  (plan/summary errors fold per model; a child failure touches one model).
 - **Within a file** — variables read concurrently over one reader (verified
   byte-identical vs sequential; 2.5 s → 0.8 s for 5 ICON-EU variables), and
   child enumeration is parallel-by-index (~0.6 s vs ~15 s sequential
   `getChildByName` scans).
-- **Valid times within a model stay sequential** — parallelizing them would
-  multiply the grid memory per model and gains little once models run
-  concurrently. One valid time failing (transient archive error) is retried
-  once and then skipped in isolation (`frameErrors` in the summary) — the
-  next tick picks the hour up again; it never fails the whole model.
+- **Valid times within a model** — `CHILD_HOUR_CONCURRENCY = 2` in a fan-out
+  child (a whole machine to itself: the next hour's range reads overlap the
+  current hour's encode without stacking more than two hours' grids);
+  sequential in the in-process `refresh`, which already runs 4 models in one
+  process. One valid time failing (transient archive error) is retried once
+  and then skipped in isolation (`frameErrors` in the summary) — a later
+  pass picks the hour up again; it never fails the whole model.
 
-Measured live: 3 fresh models × 2 layers × 2–3 hours rendered in 13.6 s
-wall-clock. Steady state per 15-min tick: 20 `latest.json` GETs; renders only
-when a run advanced. `maxDuration` 900 covers the cold-start backfill; an
-interrupted backfill resumes from where it stopped (per-frame upsert).
-Concurrent producers (cron tick + a force-run) are safe: both paint the same
-(model, layer, validTime) keys with the same run's data.
+Measured live (pre-fan-out, in-process): 3 fresh models × 2 layers × 2–3
+hours rendered in 13.6 s wall-clock. Steady state per 15-min tick: 20
+`latest.json` GETs + 20 frame queries in the orchestrator; children spawn
+only when a run advanced (hourly regionals, ~6 h globals → typically 0–3 per
+tick). A cold start fans out every model at once, 6 rendering concurrently;
+child `maxDuration` 3600 covers the longest single-model backfill, and an
+interrupted child resumes on retry / next orchestration (per-frame upsert).
+Concurrent producers (two children of consecutive runs, or a child + a
+force-run) are safe: frames upsert key-stably and `runTime` only moves
+forward.
 - R2 storage is bounded by the models' own horizons:
   `frames ≤ Σ(model valid times) × layers` ≈ 1 300 × 4 ≈ 5 000 objects,
   overwritten in place; past hours prune after 1 h. Cold-start backfill of
@@ -490,6 +555,17 @@ Concurrent producers (cron tick + a force-run) are safe: both paint the same
   demand-driven rendering can't pre-warm the "next hour" before it arrives.
 - **A separate scheduler per model matched to its publication calendar** —
   rejected (§8): more moving parts for zero savings over cheap polling.
+- **One monolithic render task (the original §8 design)** — superseded
+  2026-07-15 by the orchestrator + per-model fan-out: in one process, model
+  concurrency was memory-capped at 4 and hours had to stay sequential, so a
+  slow model/backfill blocked the rest and cold starts spanned many ticks.
+  Fan-out gives each model its own machine, retries, and log trail. The
+  in-process pass survives as the force-run/CLI path, where narrowed dev
+  slices don't warrant spawning cloud runs.
+- **Fanning out per (model, hour-chunk) instead of per model** — deferred:
+  more runs and orchestration for marginal gain today. If one model's horizon
+  ever outgrows a single child, the orchestrator can split the same child
+  task over hour ranges (the payload/idempotency scheme leaves room).
 - **`sharp` for PNG encode** — rejected: native binary complicates the
   Trigger.dev deploy; `pngjs` is fast enough at these sizes.
 
@@ -506,6 +582,9 @@ Concurrent producers (cron tick + a force-run) are safe: both paint the same
       schemas, repository, `layer-png.ts` (wind + scalar encoders), service
       (+spec), module, routes, container + `/v1/weather-map` mount
 - [x] `weathermap-render` Trigger task
+- [x] Fan-out rework (2026-07-15): `weathermap-orchestrate` +
+      `weathermap-render-model` tasks, `planRefresh`/`refreshModelById`/
+      public `prune` service entry points, per-child hour concurrency
 - [x] Lint suite + tests green; convention-reviewer pass
 - [x] E2E verified against the real archive + R2 (dwd_icon_eu: wind +
       temperature + precipitation rendered for the 3 h test horizon,
@@ -533,6 +612,22 @@ Concurrent producers (cron tick + a force-run) are safe: both paint the same
   is enough for map visualization (temperature resolves to ~0.2 °C over a
   45 °C span). If a future layer needs more, a 16-bit R+G packing is a new
   `kind`, not a schema change.
+- **Resolved — cron fan-out (2026-07-15):** the scheduled path is an
+  orchestrator (`planRefresh` → `batchTrigger` one child per due model →
+  `prune`) instead of one monolithic render run. Idempotency: global-scoped
+  `(model, referenceTime)` key with 1 h TTL — dedupes while a child works a
+  run, re-fans an incomplete render afterwards. Child knobs are design
+  constants like everything else: `machine small-2x`, `maxDuration 3600`,
+  `queue.concurrencyLimit 6` (archive-host rate bound),
+  `CHILD_HOUR_CONCURRENCY 2`.
+- **Open — perpetually-due missing variables:** a layer whose variable a
+  model never publishes (e.g. snowfall in summer) has no frame row, so its
+  hours stay "due" and every tick fans out a child that range-reads and
+  renders nothing. Pre-dates the fan-out (the monolith re-read those grids
+  every tick too), but fan-out makes it visible as recurring child runs. Fix
+  candidate: record missing (model, layer, run) markers (nullable-objectKey
+  rows or a side table) so `planModel` stops counting them due until the run
+  advances.
 - **Open — public bucket URL:** production should set
   `OBJECT_STORAGE_PUBLIC_BASE_URL` (R2 public bucket / custom domain + CDN);
   until then the proxy route serves frames. Decide the domain when deploying.
@@ -541,7 +636,7 @@ Concurrent producers (cron tick + a force-run) are safe: both paint the same
 
 ## 17. References
 
-- iOS POC contract: `../Splash/tools/wind-encoder/generate.py` (format),
+- iOS POC contract: `../nortada-app-ios/tools/wind-encoder/generate.py` (format),
   `fetch_real.py` (source path proof)
 - Open-Meteo spatial archive: `https://map-tiles.open-meteo.com/data_spatial/`
 - Model update meta: `https://api.open-meteo.com/data/<model>/static/meta.json`

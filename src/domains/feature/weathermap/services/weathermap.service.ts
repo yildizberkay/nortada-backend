@@ -44,13 +44,24 @@ const MANIFEST_LOOKBACK_MS = 60 * 60 * 1000;
 const RETENTION_HOURS = 1;
 
 /**
- * Models refreshed concurrently. Bounded, not `Promise.all` over all 20: each
- * in-flight model holds its current valid time's grids in memory (~100 MB for
- * a global 0.13° hour) and hits the same archive host — 4 keeps a cold-start
- * backfill inside the task's `maxDuration` without memory/rate-limit risk.
- * (Valid times WITHIN a model stay sequential for the same memory reason.)
+ * Models handled concurrently by the IN-PROCESS paths — the orchestrator's
+ * plan pass (`planRefresh`: one `latest.json` GET + one frame query per
+ * model) and the full force-run/CLI pass (`refresh`). Bounded, not
+ * `Promise.all` over all 20: each in-flight `refresh` model holds its current
+ * valid time's grids in memory (~100 MB for a global 0.13° hour) and hits the
+ * same archive host. (Valid times stay sequential in `refresh` for the same
+ * memory reason; the fan-out child path gets `CHILD_HOUR_CONCURRENCY`.)
  */
 const MODEL_CONCURRENCY = 4;
+
+/**
+ * Valid hours rendered concurrently inside ONE fan-out child
+ * (`weathermap-render-model`), which has a whole machine to itself: 2
+ * overlaps the next hour's range reads with the current hour's encode
+ * without stacking more than two hours' grids (~100 MB each for a global
+ * model) on the child machine.
+ */
+const CHILD_HOUR_CONCURRENCY = 2;
 
 /** `map` with at most `limit` callbacks in flight; result order preserved. */
 async function mapLimit<T, R>(
@@ -82,6 +93,18 @@ export interface WeatherMapRefreshOverrides {
   models?: string[];
   layers?: string[];
   horizonHours?: number;
+}
+
+/** The orchestrator's fan-out decision: which models have renderable work. */
+export interface WeatherMapRefreshPlan {
+  checked: number;
+  /**
+   * Models with at least one due (layer, valid time) — each becomes one
+   * `weathermap-render-model` child run. `referenceTime` (ISO) identifies the
+   * run that made the model due; it feeds the (model, run) idempotency key.
+   */
+  due: { model: string; referenceTime: string; dueFrames: number }[];
+  errors: { model: string; message: string }[];
 }
 
 export interface WeatherMapRefreshSummary {
@@ -172,12 +195,13 @@ export class WeatherMapService extends BaseUseCase {
   }
 
   /**
-   * Task entry point (every 15 min). Per enabled model: cheap `latest.json`
-   * check → for each horizon valid time, render the layers whose frame is
-   * missing or was painted by an older run — all layers of one valid time
-   * share a single `.om` reader, so adding layers adds encode work, not
-   * round-trips. Models fail independently. Finishes by pruning expired
-   * frames.
+   * The full IN-PROCESS pass (force-run task + CLI; the cron path fans out
+   * via `planRefresh` → `refreshModelById` instead). Per enabled model: cheap
+   * `latest.json` check → for each horizon valid time, render the layers
+   * whose frame is missing or was painted by an older run — all layers of one
+   * valid time share a single `.om` reader, so adding layers adds encode
+   * work, not round-trips. Models fail independently. Finishes by pruning
+   * expired frames.
    */
   async refresh(
     now: Date = new Date(),
@@ -209,11 +233,14 @@ export class WeatherMapService extends BaseUseCase {
     const results = await mapLimit(models, MODEL_CONCURRENCY, async (model) => {
       const started = Date.now();
       try {
+        // Hours stay sequential (concurrency 1): this path already runs
+        // MODEL_CONCURRENCY models in one process (see the constants).
         const result = await this.refreshModel(
           model,
           now,
           layers,
           horizonHours,
+          1,
         );
         logger.info("weather-map model done", {
           model: model.id,
@@ -259,6 +286,88 @@ export class WeatherMapService extends BaseUseCase {
 
     summary.pruned = await this.prune(now);
     return summary;
+  }
+
+  /**
+   * The orchestrator's cheap pass (RFC-0011 §8): per enabled model, one
+   * `latest.json` GET + one frame query decide whether ANY (layer, valid
+   * time) is due — no grid reads, no rendering. The cron task fans the `due`
+   * list out to per-model render tasks. Models fail independently, exactly
+   * like `refresh`.
+   */
+  async planRefresh(now: Date = new Date()): Promise<WeatherMapRefreshPlan> {
+    const models = activeWeatherMapModels();
+    const layers = activeWeatherMapLayers();
+    const plan: WeatherMapRefreshPlan = { checked: 0, due: [], errors: [] };
+    const results = await mapLimit(models, MODEL_CONCURRENCY, async (model) => {
+      try {
+        return { model, plan: await this.planModel(model, now, layers) };
+      } catch (error) {
+        return {
+          model,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+    for (const result of results) {
+      plan.checked++;
+      if ("error" in result) {
+        plan.errors.push({
+          model: result.model.id,
+          message: result.error ?? "unknown error",
+        });
+        continue;
+      }
+      if (result.plan.status !== "due") continue;
+      plan.due.push({
+        model: result.model.id,
+        referenceTime: result.plan.referenceTime.toISOString(),
+        dueFrames: result.plan.work.reduce((n, w) => n + w.dueLayers.length, 0),
+      });
+    }
+    return plan;
+  }
+
+  /**
+   * Fan-out child entry (one `weathermap-render-model` run): render every due
+   * frame of ONE model, with the child machine to itself. Re-plans from
+   * `latest.json` rather than trusting the orchestrator's snapshot — if the
+   * run advanced in between, the child renders the newer one. Throws on
+   * failure (the task's retry owns recovery — there are no sibling models to
+   * isolate here) and never prunes (the orchestrator owns pruning).
+   */
+  async refreshModelById(
+    modelId: string,
+    now: Date = new Date(),
+  ): Promise<WeatherMapRefreshSummary> {
+    const model = findWeatherMapModel(modelId);
+    if (!model?.enabled) {
+      throw new GenericError("FORM_ERROR", {
+        reason: WeatherMapReason.UNKNOWN_MODEL,
+        message: "Unknown weather-map model",
+      });
+    }
+    const result = await this.refreshModel(
+      model,
+      now,
+      this.activeLayers(),
+      undefined,
+      CHILD_HOUR_CONCURRENCY,
+    );
+    return {
+      checked: 1,
+      upToDate: result.rendered === 0 ? 1 : 0,
+      rendered: result.rendered,
+      missingVariable: result.missingVariable,
+      frameErrors: result.frameErrors,
+      pruned: 0,
+      errors: [],
+      layerStats: Object.entries(result.layerStats).map(([layer, stats]) => ({
+        model: model.id,
+        layer,
+        ...stats,
+      })),
+    };
   }
 
   async getCatalog(): Promise<WeatherMapCatalog> {
@@ -424,33 +533,35 @@ export class WeatherMapService extends BaseUseCase {
     return layer;
   }
 
-  /** Render every due (layer, valid time) of one model. */
-  private async refreshModel(
+  /**
+   * Cheap due-work computation for one model: `latest.json` + one frame
+   * query — no grid reads. Shared by the orchestrator's fan-out decision
+   * (`planRefresh`) and the render paths, so "due" can never mean two
+   * different things.
+   */
+  private async planModel(
     model: WeatherMapModel,
     now: Date,
     layers: WeatherMapLayer[],
-    horizonHours: number | undefined,
+    horizonHours?: number,
   ): Promise<{
-    rendered: number;
-    missingVariable: number;
     run: string;
-    status: "rendered" | "up-to-date" | "run-uploading";
-    frameErrors: number;
-    layerStats: Record<string, { rendered: number; missingVariable: number }>;
+    referenceTime: Date;
+    bbox: { west: number; south: number; east: number; north: number };
+    status: "run-uploading" | "up-to-date" | "due";
+    work: { validTime: Date; dueLayers: WeatherMapLayer[] }[];
   }> {
     const latest = await this.spatialSource.fetchLatest(model.id);
-    const run = latest.referenceTime.toISOString();
+    const referenceTime = latest.referenceTime;
+    const base = {
+      run: referenceTime.toISOString(),
+      referenceTime,
+      bbox: latest.bbox,
+    };
     // A run mid-upload lists valid times whose files don't exist yet — skip
     // the whole run; the next tick sees it completed.
     if (!latest.completed) {
-      return {
-        rendered: 0,
-        missingVariable: 0,
-        run,
-        status: "run-uploading",
-        frameErrors: 0,
-        layerStats: {},
-      };
+      return { ...base, status: "run-uploading", work: [] };
     }
 
     const windowStart = new Date(now.getTime() - MANIFEST_LOOKBACK_MS);
@@ -464,14 +575,7 @@ export class WeatherMapService extends BaseUseCase {
       (t) => t >= windowStart && (windowEnd === undefined || t <= windowEnd),
     );
     if (inWindow.length === 0) {
-      return {
-        rendered: 0,
-        missingVariable: 0,
-        run,
-        status: "up-to-date",
-        frameErrors: 0,
-        layerStats: {},
-      };
+      return { ...base, status: "up-to-date", work: [] };
     }
 
     // One query covers every layer's state for the window.
@@ -482,7 +586,64 @@ export class WeatherMapService extends BaseUseCase {
     const byLayerAndTime = new Map(
       existing.map((f) => [`${f.layer}|${f.validTime.getTime()}`, f]),
     );
+    // Due = no frame yet, or painted by an older run. Same run → skip: this
+    // is what makes the 15-min poll idempotent between model publications.
+    const work = inWindow
+      .map((validTime) => ({
+        validTime,
+        dueLayers: layers.filter((layer) => {
+          const frame = byLayerAndTime.get(
+            `${layer.id}|${validTime.getTime()}`,
+          );
+          return !frame || frame.runTime < referenceTime;
+        }),
+      }))
+      .filter((w) => w.dueLayers.length > 0);
+    return { ...base, status: work.length > 0 ? "due" : "up-to-date", work };
+  }
 
+  /** Render every due (layer, valid time) of one model. */
+  private async refreshModel(
+    model: WeatherMapModel,
+    now: Date,
+    layers: WeatherMapLayer[],
+    horizonHours: number | undefined,
+    hourConcurrency: number,
+  ): Promise<{
+    rendered: number;
+    missingVariable: number;
+    run: string;
+    status: "rendered" | "up-to-date" | "run-uploading";
+    frameErrors: number;
+    layerStats: Record<string, { rendered: number; missingVariable: number }>;
+  }> {
+    const plan = await this.planModel(model, now, layers, horizonHours);
+    if (plan.status !== "due") {
+      return {
+        rendered: 0,
+        missingVariable: 0,
+        run: plan.run,
+        status: plan.status,
+        frameErrors: 0,
+        layerStats: {},
+      };
+    }
+
+    const hourResults = await mapLimit(
+      plan.work,
+      hourConcurrency,
+      ({ validTime, dueLayers }) =>
+        this.renderValidTime(
+          model,
+          plan.referenceTime,
+          plan.bbox,
+          validTime,
+          dueLayers,
+        ),
+    );
+
+    // Fold in valid-time order so counters/stats stay deterministic even when
+    // hours rendered concurrently.
     let rendered = 0;
     let missingVariable = 0;
     let frameErrors = 0;
@@ -494,91 +655,107 @@ export class WeatherMapService extends BaseUseCase {
       layerStats[layerId] ??= { rendered: 0, missingVariable: 0 };
       return layerStats[layerId];
     };
-    for (const validTime of inWindow) {
-      // Due = no frame yet, or painted by an older run. Same run → skip: this
-      // is what makes the 15-min poll idempotent between model publications.
-      const dueLayers = layers.filter((layer) => {
-        const frame = byLayerAndTime.get(`${layer.id}|${validTime.getTime()}`);
-        return !frame || frame.runTime < latest.referenceTime;
-      });
-      if (dueLayers.length === 0) continue;
-
-      // One reader per file: the union of every due layer's variables comes
-      // back in a single range-read session. One valid time failing (a
-      // transient archive/network error) must not kill the model's other
-      // hours — retry once, then skip just this hour; the next tick retries
-      // it anyway (its frame stays missing/stale → still due).
-      const variables = [
-        ...new Set(dueLayers.flatMap((l) => layerVariables(l))),
-      ];
-      let grids: Map<string, SpatialGrid>;
-      try {
-        grids = await this.fetchGridsWithRetry(
-          model.id,
-          latest.referenceTime,
-          validTime,
-          variables,
-        );
-      } catch (error) {
+    for (const hour of hourResults) {
+      if (hour.frameError) {
         frameErrors++;
-        logger.warn("weather-map valid time failed; skipping this hour", {
-          model: model.id,
-          validTime: validTime.toISOString(),
-          error,
-        });
         continue;
       }
-
-      for (const layer of dueLayers) {
-        const encoded = this.encodeLayer(layer, grids);
-        if (!encoded) {
-          // The file genuinely lacks this layer's variable (e.g. snowfall in
-          // summer runs) — not an error; the layer's manifest stays empty.
-          logger.debug("weather-map layer variable missing", {
-            model: model.id,
-            layer: layer.id,
-            validTime: validTime.toISOString(),
-          });
-          missingVariable++;
-          layerStat(layer.id).missingVariable++;
-          continue;
-        }
-        const objectKey = frameObjectKey(model.id, layer.id, validTime);
-        await this.objectStorage.put(objectKey, encoded.png, {
-          contentType: "image/png",
-        });
-        await this.weatherMapRepository.upsertFrame({
-          model: model.id,
-          layer: layer.id,
-          validTime,
-          runTime: latest.referenceTime,
-          objectKey,
-          width: encoded.width,
-          height: encoded.height,
-          west: latest.bbox.west,
-          south: latest.bbox.south,
-          east: latest.bbox.east,
-          north: latest.bbox.north,
-          scales: encoded.scales as unknown as JsonValue,
-          renderedAt: new Date(),
-        });
+      for (const layerId of hour.rendered) {
         rendered++;
-        layerStat(layer.id).rendered++;
-        logger.debug("weather-map frame rendered", {
-          model: model.id,
-          layer: layer.id,
-          validTime: validTime.toISOString(),
-        });
+        layerStat(layerId).rendered++;
+      }
+      for (const layerId of hour.missingVariable) {
+        missingVariable++;
+        layerStat(layerId).missingVariable++;
       }
     }
     return {
       rendered,
       missingVariable,
       frameErrors,
-      run,
+      run: plan.run,
       status: rendered > 0 ? "rendered" : "up-to-date",
       layerStats,
     };
+  }
+
+  /** Render one valid time's due layers: one `.om` reader session for the
+   * union of their variables, then encode + upload + upsert per layer. */
+  private async renderValidTime(
+    model: WeatherMapModel,
+    referenceTime: Date,
+    bbox: { west: number; south: number; east: number; north: number },
+    validTime: Date,
+    dueLayers: WeatherMapLayer[],
+  ): Promise<{
+    frameError: boolean;
+    rendered: string[];
+    missingVariable: string[];
+  }> {
+    // One valid time failing (a transient archive/network error) must not
+    // kill the model's other hours — retry once, then skip just this hour;
+    // the next tick retries it anyway (its frame stays missing/stale → still
+    // due).
+    const variables = [...new Set(dueLayers.flatMap((l) => layerVariables(l)))];
+    let grids: Map<string, SpatialGrid>;
+    try {
+      grids = await this.fetchGridsWithRetry(
+        model.id,
+        referenceTime,
+        validTime,
+        variables,
+      );
+    } catch (error) {
+      logger.warn("weather-map valid time failed; skipping this hour", {
+        model: model.id,
+        validTime: validTime.toISOString(),
+        error,
+      });
+      return { frameError: true, rendered: [], missingVariable: [] };
+    }
+
+    const rendered: string[] = [];
+    const missingVariable: string[] = [];
+    for (const layer of dueLayers) {
+      const encoded = this.encodeLayer(layer, grids);
+      if (!encoded) {
+        // The file genuinely lacks this layer's variable (e.g. snowfall in
+        // summer runs) — not an error; the layer's manifest stays empty.
+        logger.debug("weather-map layer variable missing", {
+          model: model.id,
+          layer: layer.id,
+          validTime: validTime.toISOString(),
+        });
+        missingVariable.push(layer.id);
+        continue;
+      }
+      const objectKey = frameObjectKey(model.id, layer.id, validTime);
+      await this.objectStorage.put(objectKey, encoded.png, {
+        contentType: "image/png",
+      });
+      await this.weatherMapRepository.upsertFrame({
+        model: model.id,
+        layer: layer.id,
+        validTime,
+        runTime: referenceTime,
+        objectKey,
+        width: encoded.width,
+        height: encoded.height,
+        west: bbox.west,
+        south: bbox.south,
+        east: bbox.east,
+        north: bbox.north,
+        scales: encoded.scales as unknown as JsonValue,
+        renderedAt: new Date(),
+      });
+      rendered.push(layer.id);
+      logger.debug("weather-map frame rendered", {
+        model: model.id,
+        layer: layer.id,
+        validTime: validTime.toISOString(),
+      });
+    }
+    return { frameError: false, rendered, missingVariable };
   }
 
   /** One retry — transient archive/network blips are common enough on cold
@@ -629,8 +806,10 @@ export class WeatherMapService extends BaseUseCase {
     return encodeScalarLayer(grid);
   }
 
-  /** Delete frames (rows + objects) behind the retention cutoff. */
-  private async prune(now: Date): Promise<number> {
+  /** Delete frames (rows + objects) behind the retention cutoff. Public
+   * because the orchestrator task owns pruning on the fan-out path (children
+   * never prune); `refresh` keeps calling it at the end of a full pass. */
+  async prune(now: Date): Promise<number> {
     const cutoff = new Date(now.getTime() - RETENTION_HOURS * 60 * 60 * 1000);
     const expired = await this.weatherMapRepository.findOlderThan(cutoff);
     if (expired.length === 0) return 0;

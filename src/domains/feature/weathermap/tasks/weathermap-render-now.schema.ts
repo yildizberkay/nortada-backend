@@ -1,4 +1,4 @@
-import type { TaskWithSchema } from "@trigger.dev/sdk/v3";
+import type { TaskWithSchema } from "@trigger.dev/sdk";
 import { z } from "zod";
 
 export const WEATHERMAP_RENDER_NOW_TASK_ID = "weathermap-render-now";

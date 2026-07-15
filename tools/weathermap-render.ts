@@ -1,7 +1,8 @@
 /**
  * Force-run the weather-map render pipeline from the terminal — no Trigger.dev
- * needed. Shares the exact `refresh()` the cron task calls, so the
- * run-advance idempotence applies: an unchanged run is a cheap no-op.
+ * needed. Runs the full in-process `refresh()` pass (the cron path fans out
+ * per model instead — RFC-0011 §8); the run-advance idempotence applies
+ * either way: an unchanged run is a cheap no-op.
  *
  *   npm run weathermap:render                                  # full active set
  *   npm run weathermap:render -- --models=dwd_icon_eu          # one model

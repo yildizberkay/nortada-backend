@@ -421,6 +421,155 @@ describe("WeatherMapService", () => {
     });
   });
 
+  describe("planRefresh", () => {
+    // The orchestrator's pass takes no narrowing — quiet the other registry
+    // models per test via fetchLatest so assertions stay on dwd_icon_d2.
+    const onlyD2 = (d2: SpatialLatest) => {
+      mockSource.fetchLatest.mockImplementation(async (model: string) =>
+        model === "dwd_icon_d2" ? d2 : latest({ completed: false }),
+      );
+    };
+
+    it("lists a model with due work, its run, and the due frame count", async () => {
+      onlyD2(latest({ validTimes: [NOON] }));
+
+      const plan = await service.planRefresh(NOW);
+
+      // 1 valid time × 4 layers due, nothing rendered/fetched — plan is cheap.
+      expect(plan.due).toEqual([
+        {
+          model: "dwd_icon_d2",
+          referenceTime: RUN.toISOString(),
+          dueFrames: 4,
+        },
+      ]);
+      expect(plan.checked).toBeGreaterThan(1); // the full enabled registry
+      expect(plan.errors).toEqual([]);
+      expect(mockSource.fetchGrids).not.toHaveBeenCalled();
+      expect(mockStorage.put).not.toHaveBeenCalled();
+    });
+
+    it("excludes up-to-date models (frames painted by the same run)", async () => {
+      onlyD2(latest({ validTimes: [NOON] }));
+      mockRepo.findFrames.mockResolvedValue(
+        ["wind", "temperature", "precipitation", "snowfall"].map((layer) =>
+          frame("dwd_icon_d2", layer, NOON),
+        ),
+      );
+
+      const plan = await service.planRefresh(NOW);
+
+      expect(plan.due).toEqual([]);
+    });
+
+    it("includes a model whose frames a newer run must repaint", async () => {
+      onlyD2(latest({ validTimes: [NOON] }));
+      mockRepo.findFrames.mockResolvedValue([
+        frame("dwd_icon_d2", "wind", NOON, { runTime: OLDER_RUN }),
+        frame("dwd_icon_d2", "temperature", NOON),
+        frame("dwd_icon_d2", "precipitation", NOON),
+        frame("dwd_icon_d2", "snowfall", NOON),
+      ]);
+
+      const plan = await service.planRefresh(NOW);
+
+      expect(plan.due).toEqual([
+        {
+          model: "dwd_icon_d2",
+          referenceTime: RUN.toISOString(),
+          dueFrames: 1,
+        },
+      ]);
+    });
+
+    it("collects per-model failures without failing the plan", async () => {
+      mockSource.fetchLatest.mockImplementation(async (model: string) => {
+        if (model === "dwd_icon_d2") throw new Error("feed broken");
+        return latest({ completed: false });
+      });
+
+      const plan = await service.planRefresh(NOW);
+
+      expect(plan.errors).toEqual([
+        { model: "dwd_icon_d2", message: "feed broken" },
+      ]);
+      expect(plan.due).toEqual([]);
+    });
+  });
+
+  describe("refreshModelById", () => {
+    it("renders every due frame of the one model and never prunes", async () => {
+      const one = new Date("2026-07-15T13:00:00Z");
+      mockSource.fetchLatest.mockResolvedValue(
+        latest({ validTimes: [NOON, one] }),
+      );
+
+      const summary = await service.refreshModelById("dwd_icon_d2", NOW);
+
+      // 2 valid times × 4 layers; hours may render concurrently.
+      expect(summary).toMatchObject({
+        checked: 1,
+        rendered: 8,
+        upToDate: 0,
+        missingVariable: 0,
+        pruned: 0,
+        errors: [],
+      });
+      expect(summary.layerStats).toEqual(
+        expect.arrayContaining([
+          {
+            model: "dwd_icon_d2",
+            layer: "wind",
+            rendered: 2,
+            missingVariable: 0,
+          },
+        ]),
+      );
+      const keys = mockStorage.put.mock.calls.map(([key]) => key);
+      expect(keys).toContain(
+        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.png",
+      );
+      expect(keys).toContain(
+        "weather-map/dwd_icon_d2/wind/2026-07-15T1300Z.png",
+      );
+      // Pruning is the orchestrator's job — the child must not touch it.
+      expect(mockRepo.findOlderThan).not.toHaveBeenCalled();
+      expect(mockRepo.deleteByIds).not.toHaveBeenCalled();
+    });
+
+    it("reports up-to-date when the run already painted everything", async () => {
+      mockSource.fetchLatest.mockResolvedValue(latest({ validTimes: [NOON] }));
+      mockRepo.findFrames.mockResolvedValue(
+        ["wind", "temperature", "precipitation", "snowfall"].map((layer) =>
+          frame("dwd_icon_d2", layer, NOON),
+        ),
+      );
+
+      const summary = await service.refreshModelById("dwd_icon_d2", NOW);
+
+      expect(summary).toMatchObject({ rendered: 0, upToDate: 1 });
+      expect(mockSource.fetchGrids).not.toHaveBeenCalled();
+    });
+
+    it("rejects unknown and disabled models (no isolation here — the task retries)", async () => {
+      await expect(service.refreshModelById("nope", NOW)).rejects.toThrow(
+        GenericError,
+      );
+      await expect(
+        service.refreshModelById("ukmo_uk_deterministic_2km", NOW),
+      ).rejects.toThrow(GenericError);
+      expect(mockSource.fetchLatest).not.toHaveBeenCalled();
+    });
+
+    it("propagates a model failure instead of swallowing it", async () => {
+      mockSource.fetchLatest.mockRejectedValue(new Error("feed broken"));
+
+      await expect(
+        service.refreshModelById("dwd_icon_d2", NOW),
+      ).rejects.toThrow("feed broken");
+    });
+  });
+
   describe("getCatalog", () => {
     it("lists active models and layers with units", async () => {
       const catalog = await service.getCatalog();
@@ -503,7 +652,7 @@ describe("WeatherMapService", () => {
     });
 
     it("links the public bucket URL when configured", async () => {
-      setConfig("https://cdn.splash.app/");
+      setConfig("https://cdn.nortada.app/");
       service = new WeatherMapService(mockRepo, mockSource, mockStorage);
       mockRepo.findFrames.mockResolvedValue([
         frame("dwd_icon_d2", "wind", NOON),
@@ -512,7 +661,7 @@ describe("WeatherMapService", () => {
       const manifest = await service.getManifest("dwd_icon_d2", "wind");
 
       expect(manifest.frames[0].url).toBe(
-        "https://cdn.splash.app/weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.png",
+        "https://cdn.nortada.app/weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.png",
       );
     });
 

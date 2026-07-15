@@ -1,4 +1,4 @@
-import { logger, schemaTask } from "@trigger.dev/sdk/v3";
+import { logger, schemaTask } from "@trigger.dev/sdk";
 
 import {
   finalizeTrigger,
@@ -13,12 +13,14 @@ import {
   weathermapRenderNowSchema,
 } from "./weathermap-render-now.schema";
 
-/** Manual force-run of the weather-map render (RFC-0011 §8) — same
- * `refresh()` the cron task calls, so it shares the run-advance idempotence:
- * a force-run after an unchanged run is a cheap no-op unless you narrow the
- * payload. Trigger it from the Trigger.dev dashboard (or `tasks.trigger`)
- * with `{}` for a full pass, or `{ models, layers, horizonHours }` to render
- * a specific slice. Local/dev without Trigger: `npm run weathermap:render`. */
+/** Manual force-run of the weather-map render (RFC-0011 §8): one full
+ * IN-PROCESS pass over the active set — unlike the cron path, which fans out
+ * per model via `weathermap-orchestrate`. It shares the run-advance
+ * idempotence, so a force-run after unchanged runs is a cheap no-op unless
+ * you narrow the payload. Trigger it from the Trigger.dev dashboard (or
+ * `tasks.trigger`) with `{}` for a full pass, or
+ * `{ models, layers, horizonHours }` to render a specific slice. Local/dev
+ * without Trigger: `npm run weathermap:render`. */
 export const weathermapRenderNowTask = schemaTask({
   id: WEATHERMAP_RENDER_NOW_TASK_ID,
   schema: weathermapRenderNowSchema,
