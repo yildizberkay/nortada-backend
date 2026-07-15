@@ -23,7 +23,6 @@ declare namespace NodeJS {
 
     // Trigger.dev runtime.
     TRIGGER_SECRET_KEY?: string;
-    TRIGGER_PROJECT_ID?: string;
     // Set to "true" inside the Trigger worker so infra can branch on it.
     TRIGGER_WORKER?: string;
 

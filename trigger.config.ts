@@ -1,10 +1,12 @@
 import { defineConfig } from "@trigger.dev/sdk";
 
-// NOTE: `project` is a placeholder until a real Trigger.dev project is created
-// (see docs/otonom-kararlar.md). It only matters for `trigger:dev`/deploy — the
-// HTTP server and unit tests never touch it. Set TRIGGER_PROJECT_ID to override.
 export default defineConfig({
-  project: process.env.TRIGGER_PROJECT_ID ?? "proj_splash_placeholder",
+  project: "proj_xvhmhumoeeskbkdgkuxk",
   dirs: ["./src/**/tasks"],
   maxDuration: 300,
+  build: {
+    // pino resolves its worker-thread transports at runtime, which breaks
+    // esbuild bundling (worker.js never gets emitted).
+    external: ["pino", "pino-pretty"],
+  },
 });
