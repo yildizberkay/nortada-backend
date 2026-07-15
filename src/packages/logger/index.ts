@@ -1,58 +1,74 @@
-import { logger } from "@trigger.dev/sdk";
+import { logger as triggerLogger } from "@trigger.dev/sdk";
+import { pino } from "pino";
 
 const isTrigger = () => {
   return process.env.TRIGGER_WORKER === "true";
 };
 
-type LogLevel = "silly" | "debug" | "info" | "warn" | "error";
+export type LogLevel = "silly" | "debug" | "info" | "warn" | "error";
 
-// Ordered least→most severe. The filter suppresses any level BELOW
-// `currentLevel`, so `silly` (lowest) is the most suppressible — the opposite
-// ordering would make it impossible to ever quiet `silly` output.
-const LOG_LEVELS: Record<LogLevel, number> = {
-  silly: 0,
-  debug: 1,
-  info: 2,
-  warn: 3,
-  error: 4,
-};
+// Our level names → pino's ("silly" is a winston-ism; pino calls it "trace").
+const PINO_LEVEL = {
+  silly: "trace",
+  debug: "debug",
+  info: "info",
+  warn: "warn",
+  error: "error",
+} as const satisfies Record<LogLevel, string>;
 
-// Read straight from env (not globalConfig) so the logger has zero coupling to
-// the config layer and works before init. Prod quiets silly/debug; dev is
-// verbose.
-const currentLevel: LogLevel =
-  process.env.ENVIRONMENT === "prod" ? "info" : "debug";
+const isValidLevel = (value: string): value is LogLevel => value in PINO_LEVEL;
 
-function formatMessage(
-  prefix: string,
-  level: LogLevel,
-  message: string,
-  data?: unknown,
-) {
-  const timestamp = new Date().toISOString();
-  return JSON.stringify({
-    level,
-    message,
-    timestamp,
-    prefix,
-    data,
-  });
+/**
+ * Deploy-time level control: an explicit `LOG_LEVEL` env always wins
+ * (silly|debug|info|warn|error); otherwise prod defaults to `info` and dev to
+ * `debug`, so verbose logs (incl. per-request HTTP logging) are on locally and
+ * off in prod until opened with `LOG_LEVEL=debug` on a deploy. Tests default to
+ * `silent` because pino writes straight to stdout, bypassing `jest --silent`.
+ *
+ * Reads env directly (not globalConfig) so the logger has zero coupling to the
+ * config layer and works before init.
+ */
+export function resolveLogLevel(
+  env: Record<string, string | undefined> = process.env,
+): LogLevel | "silent" {
+  const raw = env.LOG_LEVEL?.toLowerCase();
+  if (raw !== undefined && isValidLevel(raw)) {
+    return raw;
+  }
+  if (env.JEST_WORKER_ID !== undefined) {
+    return "silent";
+  }
+  return env.ENVIRONMENT === "prod" ? "info" : "debug";
 }
 
-function formatForTrigger(
-  prefix: string,
-  level: LogLevel,
-  message: string,
-  data?: unknown,
-) {
-  return [
-    `${prefix}: ${message}`,
-    {
-      level,
-      data,
-    },
-  ] as const;
-}
+const level = resolveLogLevel();
+
+// Pretty human-readable lines locally; raw single-line JSON everywhere else so
+// log collectors can parse fields. Never pretty inside Trigger workers or tests
+// (the transport spawns a worker thread those runtimes shouldn't carry).
+const usePretty =
+  process.env.ENVIRONMENT !== "prod" &&
+  !isTrigger() &&
+  process.env.JEST_WORKER_ID === undefined;
+
+const root = pino({
+  level: level === "silent" ? "silent" : PINO_LEVEL[level],
+  timestamp: pino.stdTimeFunctions.isoTime,
+  // Drop pino's default pid/hostname bindings — noise on a single-instance app.
+  base: undefined,
+  ...(usePretty
+    ? {
+        transport: {
+          target: "pino-pretty",
+          options: {
+            translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l",
+            messageFormat: "[{prefix}] {msg}",
+            ignore: "prefix",
+          },
+        },
+      }
+    : {}),
+});
 
 export interface Logger {
   debug(message: string, data?: unknown): void;
@@ -63,40 +79,39 @@ export interface Logger {
 }
 
 export function createLogger(prefix: string): Logger {
-  const log = (level: LogLevel, message: string, data?: unknown) => {
-    if (LOG_LEVELS[level] < LOG_LEVELS[currentLevel]) {
+  const child = root.child({ prefix });
+
+  const log = (logLevel: LogLevel, message: string, data?: unknown) => {
+    const pinoLevel = PINO_LEVEL[logLevel];
+    if (!child.isLevelEnabled(pinoLevel)) {
       return;
     }
 
+    // Trigger.dev runs also mirror the line into the run's structured log
+    // viewer (stdout alone doesn't surface there with levels intact).
     if (isTrigger()) {
-      const formattedForTrigger = formatForTrigger(
-        prefix,
-        level,
-        message,
-        data,
-      );
-      switch (level) {
+      const args = [
+        `${prefix}: ${message}`,
+        { level: logLevel, data },
+      ] as const;
+      switch (logLevel) {
         case "error":
-          logger.error(...formattedForTrigger);
+          triggerLogger.error(...args);
           break;
         case "warn":
-          logger.warn(...formattedForTrigger);
+          triggerLogger.warn(...args);
           break;
         default:
-          logger.log(...formattedForTrigger);
+          triggerLogger.log(...args);
       }
     }
 
-    const formatted = formatMessage(prefix, level, message, data);
-    switch (level) {
-      case "error":
-        console.error(formatted);
-        break;
-      case "warn":
-        console.warn(formatted);
-        break;
-      default:
-        console.log(formatted);
+    if (data === undefined) {
+      child[pinoLevel](message);
+    } else {
+      // Nest under `data` (not spread) so caller fields can never collide with
+      // pino's own (level/time/msg/prefix).
+      child[pinoLevel]({ data }, message);
     }
   };
 

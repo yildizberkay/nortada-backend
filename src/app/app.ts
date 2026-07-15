@@ -10,11 +10,14 @@ import { globalConfig } from "@/app/global-config";
 import { getDBClient } from "@/db/db.manager";
 import { registerRoutes } from "@/domains";
 import { errorHandler } from "@/middlewares/error-handler.middleware";
+import { requestLogger } from "@/middlewares/request-logger.middleware";
 import type { HonoContext } from "@/types";
 
 const app = new Hono<HonoContext>();
 
 app.use(contextStorage());
+// First in the chain so the duration covers the whole pipeline.
+app.use(requestLogger());
 app.use(compress());
 
 app.use(

@@ -4,6 +4,10 @@ declare namespace NodeJS {
     ENVIRONMENT: "prod" | "dev";
     DATABASE_URL: string;
 
+    // Deploy-time log verbosity override (silly|debug|info|warn|error).
+    // Unset → prod=info, dev=debug (see src/packages/logger).
+    LOG_LEVEL?: string;
+
     // Clerk (real logins — RFC-0002). Optional at boot so local/dev can run
     // anonymous-only without Clerk configured.
     CLERK_SECRET_KEY?: string;
