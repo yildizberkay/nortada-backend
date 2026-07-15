@@ -26,9 +26,11 @@ export interface Config {
   };
 
   // Our own anonymous-device auth (RFC-0002). `anonymousJwtSecret` signs the
-  // stateless HS256 tokens issued to anonymous devices.
+  // stateless HS256 tokens issued to anonymous devices. Unset in the Trigger
+  // worker — it never mints/verifies these, so the secret is not exposed to
+  // that runtime at all.
   auth: {
-    anonymousJwtSecret: string;
+    anonymousJwtSecret?: string;
   };
 
   trigger: {
@@ -66,8 +68,8 @@ export interface Config {
 }
 
 // Whether we are running inside the Trigger.dev worker. Background tasks never
-// sign/verify the anonymous JWT, so the prod secret-length rule is relaxed
-// there (a secret they never use must not crash unrelated jobs).
+// sign/verify the anonymous JWT, so the secret is not handed to that runtime
+// at all — its required/length checks are skipped entirely there.
 const isTriggerWorker = () => process.env.TRIGGER_WORKER === "true";
 
 /**
@@ -79,7 +81,7 @@ const envSchema = z
   .object({
     ENVIRONMENT: z.enum(["prod", "dev"]),
     DATABASE_URL: z.string().min(1),
-    AUTH_ANONYMOUS_JWT_SECRET: z.string().min(1),
+    AUTH_ANONYMOUS_JWT_SECRET: z.string().optional(),
     CLERK_SECRET_KEY: z.string().optional(),
     CLERK_PUBLISHABLE_KEY: z.string().optional(),
     // Comma-separated list of authorized parties (azp) for Clerk tokens.
@@ -101,17 +103,26 @@ const envSchema = z
     OBJECT_STORAGE_PUBLIC_BASE_URL: z.string().optional(),
   })
   .superRefine((val, ctx) => {
-    // In production a short/empty HS256 key signs forgeable device tokens.
-    if (
-      val.ENVIRONMENT === "prod" &&
-      !isTriggerWorker() &&
-      val.AUTH_ANONYMOUS_JWT_SECRET.length < 32
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "AUTH_ANONYMOUS_JWT_SECRET must be ≥32 chars in production",
-        path: ["AUTH_ANONYMOUS_JWT_SECRET"],
-      });
+    // The Trigger worker never signs anonymous tokens, so the secret is not
+    // handed to that runtime at all. Every other process must have it — and
+    // in production a short/empty HS256 key signs forgeable device tokens.
+    if (!isTriggerWorker()) {
+      if (!val.AUTH_ANONYMOUS_JWT_SECRET) {
+        ctx.addIssue({
+          code: "custom",
+          message: "AUTH_ANONYMOUS_JWT_SECRET is required",
+          path: ["AUTH_ANONYMOUS_JWT_SECRET"],
+        });
+      } else if (
+        val.ENVIRONMENT === "prod" &&
+        val.AUTH_ANONYMOUS_JWT_SECRET.length < 32
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "AUTH_ANONYMOUS_JWT_SECRET must be ≥32 chars in production",
+          path: ["AUTH_ANONYMOUS_JWT_SECRET"],
+        });
+      }
     }
     // Object storage backs the raw GPS track for BOTH the HTTP upload and the
     // Trigger metrics read, so it's required in prod regardless of worker role.

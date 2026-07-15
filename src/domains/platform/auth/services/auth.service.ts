@@ -60,7 +60,16 @@ export class AuthService extends BaseUseCase {
   }
 
   private get anonymousSecret(): Uint8Array {
-    return new TextEncoder().encode(this.config.auth.anonymousJwtSecret);
+    const secret = this.config.auth.anonymousJwtSecret;
+    // Unset only in the Trigger worker, which never mints/verifies these
+    // tokens — reaching this getter without it is a wiring bug, not a bad
+    // request, so it surfaces as an unexpected 500.
+    if (!secret) {
+      throw new Error(
+        "AUTH_ANONYMOUS_JWT_SECRET is not configured in this process",
+      );
+    }
+    return new TextEncoder().encode(secret);
   }
 
   /** Mint a short-lived access token (our HS256 anonymous JWT). */

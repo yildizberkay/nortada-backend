@@ -1,5 +1,6 @@
 import { jwtVerify, SignJWT } from "jose";
 
+import { globalConfig } from "@/app/global-config";
 import type { User } from "@/db";
 import { GenericError } from "@/packages/error";
 
@@ -142,6 +143,25 @@ describe("AuthService", () => {
       expect(mockRepo.createAnonymous).toHaveBeenCalledWith("new-device");
       const { payload } = await jwtVerify(result.accessToken, ANON_SECRET);
       expect(payload.sub).toBe("fresh-uid");
+    });
+
+    it("fails loudly when the signing secret is not configured (worker wiring bug)", async () => {
+      const cfg = (
+        globalConfig as unknown as {
+          _config: { auth: { anonymousJwtSecret?: string } };
+        }
+      )._config;
+      const original = cfg.auth.anonymousJwtSecret;
+      cfg.auth.anonymousJwtSecret = undefined;
+      try {
+        mockRepo.findByAnonymousDeviceId.mockResolvedValue(anonUser());
+
+        await expect(service.issueAnonymous("device-123")).rejects.toThrow(
+          "AUTH_ANONYMOUS_JWT_SECRET is not configured",
+        );
+      } finally {
+        cfg.auth.anonymousJwtSecret = original;
+      }
     });
   });
 

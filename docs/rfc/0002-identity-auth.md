@@ -428,7 +428,7 @@ A future retired-*user*-row garbage collector (sweeping long-retired anonymous `
 
 | Var                          | Required           | Purpose                                                            |
 | ---------------------------- | ------------------ | ----------------------------------------------------------------- |
-| `AUTH_ANONYMOUS_JWT_SECRET`  | yes                | HS256 signing secret. **Prod gate:** must be ≥ 32 chars (a `superRefine`), relaxed inside the Trigger worker (`TRIGGER_WORKER=true`, which never signs tokens). |
+| `AUTH_ANONYMOUS_JWT_SECRET`  | yes (HTTP process) | HS256 signing secret. **Prod gate:** must be ≥ 32 chars (a `superRefine`). **Not set in the Trigger worker** (`TRIGGER_WORKER=true`) — the worker never signs tokens, so the secret is not exposed to that runtime; `AuthService` fails loudly if it is ever needed there (2026-07-15). |
 | `CLERK_SECRET_KEY`           | optional           | Clerk API secret used for token verification.                     |
 | `CLERK_PUBLISHABLE_KEY`      | optional           | Clerk publishable key (client-facing; carried for completeness).  |
 | `CLERK_AUTHORIZED_PARTIES`   | optional           | Comma-separated azp allow-list; split/trimmed into `string[]`.    |

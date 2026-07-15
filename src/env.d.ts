@@ -16,8 +16,9 @@ declare namespace NodeJS {
     CLERK_AUTHORIZED_PARTIES?: string;
 
     // Our own anonymous-device JWT signing secret (RFC-0002). HS256 — must be
-    // ≥32 chars in production (enforced in global-config).
-    AUTH_ANONYMOUS_JWT_SECRET: string;
+    // ≥32 chars in production (enforced in global-config). Deliberately unset
+    // in the Trigger worker, which never signs these tokens.
+    AUTH_ANONYMOUS_JWT_SECRET?: string;
 
     // Trigger.dev runtime.
     TRIGGER_SECRET_KEY?: string;
