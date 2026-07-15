@@ -3,6 +3,7 @@ import { createActivityModule } from "@/domains/feature/activity/activity.module
 import { createBriefingModule } from "@/domains/feature/briefing/briefing.module";
 import { createSpotModule } from "@/domains/feature/spot/spot.module";
 import { createWeatherModule } from "@/domains/feature/weather/weather.module";
+import { createWeatherMapModule } from "@/domains/feature/weathermap/weathermap.module";
 import { createAuthModule } from "@/domains/platform/auth/auth.module";
 import { createUserModule } from "@/domains/platform/user/user.module";
 
@@ -54,6 +55,9 @@ export function buildContainer(db: DBManager) {
     ...deps,
     spotPort: spotServices.spotService,
   });
+  // Weather-map pipeline (RFC-0011) — self-contained (spatial archive + object
+  // storage), no cross-domain ports.
+  const weatherMap = createWeatherMapModule(deps);
   // Briefing composes over spot + user + weather — pure ports, no repositories
   // of its own (RFC-0010).
   const briefing = createBriefingModule({
@@ -69,6 +73,7 @@ export function buildContainer(db: DBManager) {
     ...user,
     ...spotServices,
     ...weather,
+    ...weatherMap,
     ...briefing,
     ...activityServices,
   };

@@ -11,6 +11,7 @@ import {
   spotRoute,
 } from "@/domains/feature/spot/routes/v1";
 import { weatherRoute } from "@/domains/feature/weather/routes/v1";
+import { weatherMapRoute } from "@/domains/feature/weathermap/routes/v1";
 import { authRoute } from "@/domains/platform/auth/routes/v1";
 import { userRoute } from "@/domains/platform/user/routes/v1";
 import type { HonoContext } from "@/types";
@@ -29,4 +30,5 @@ export const registerRoutes = (app: Hono<HonoContext>) => {
   app.route("/v1/me/briefing", briefingRoute);
   app.route("/v1/activities", activityRoute);
   app.route("/v1/equipment", equipmentRoute);
+  app.route("/v1/weather-map", weatherMapRoute);
 };

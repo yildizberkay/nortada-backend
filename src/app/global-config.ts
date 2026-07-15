@@ -36,7 +36,6 @@ export interface Config {
 
   trigger: {
     secretKey?: string;
-    projectId?: string;
   };
 
   // OpenStreetMap Overpass API — spot ingest source (RFC-0004). ODbL: attribute
@@ -62,6 +61,10 @@ export interface Config {
     accessKeyId?: string;
     secretAccessKey?: string;
     forcePathStyle: boolean;
+    // Public base URL of the bucket (R2 public bucket / custom domain). When
+    // set, wind-field manifests link objects directly; when unset, the API
+    // proxies them (RFC-0011 §6).
+    publicBaseUrl?: string;
   };
 }
 
@@ -86,7 +89,6 @@ const envSchema = z
     // Comma-separated list of authorized parties (azp) for Clerk tokens.
     CLERK_AUTHORIZED_PARTIES: z.string().optional(),
     TRIGGER_SECRET_KEY: z.string().optional(),
-    TRIGGER_PROJECT_ID: z.string().optional(),
     OSM_OVERPASS_URL: z
       .string()
       .default("https://overpass-api.de/api/interpreter"),
@@ -100,6 +102,7 @@ const envSchema = z
     OBJECT_STORAGE_ACCESS_KEY_ID: z.string().optional(),
     OBJECT_STORAGE_SECRET_ACCESS_KEY: z.string().optional(),
     OBJECT_STORAGE_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
+    OBJECT_STORAGE_PUBLIC_BASE_URL: z.string().optional(),
   })
   .superRefine((val, ctx) => {
     // In production a short/empty HS256 key signs forgeable device tokens.
@@ -164,7 +167,6 @@ export class GlobalConfig {
       },
       trigger: {
         secretKey: env.TRIGGER_SECRET_KEY,
-        projectId: env.TRIGGER_PROJECT_ID,
       },
       osm: {
         overpassUrl: env.OSM_OVERPASS_URL,
@@ -180,6 +182,7 @@ export class GlobalConfig {
         accessKeyId: env.OBJECT_STORAGE_ACCESS_KEY_ID,
         secretAccessKey: env.OBJECT_STORAGE_SECRET_ACCESS_KEY,
         forcePathStyle: env.OBJECT_STORAGE_FORCE_PATH_STYLE === "true",
+        publicBaseUrl: env.OBJECT_STORAGE_PUBLIC_BASE_URL,
       },
     };
   }

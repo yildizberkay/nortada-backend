@@ -528,6 +528,61 @@ export const weatherModelMetaTable = pgTable("weather_model_meta", {
 export type WeatherModelMeta = typeof weatherModelMetaTable.$inferSelect;
 export type NewWeatherModelMeta = typeof weatherModelMetaTable.$inferInsert;
 
+// ─── weather-map frames (RFC-0011) ───────────────────────────────────────────
+// One row per rendered weather texture: (model, layer, validTime) is the
+// natural key — a newer model run repaints the SAME row/object
+// (valid-time-keyed overwrite), `runTime` records which run last painted it.
+// `layer` is a registry id ("wind", "temperature", …) — new layers are code
+// entries, never schema changes. Postgres indexes the R2 blobs (we never LIST
+// the bucket). `scales` is the layer-shaped decode payload (jsonb because each
+// layer packs channels differently: wind = u/v/gust extremes + hasRealGust,
+// scalars = min/max) — per-frame because textures normalize to their own
+// extremes for full 8-bit precision.
+export const weatherMapFrameTable = pgTable(
+  "weather_map_frame",
+  {
+    id: idColumn(),
+    uid: uidColumn(),
+    model: text("model").notNull(),
+    layer: text("layer").notNull(),
+    validTime: timestamp("valid_time", {
+      precision: 3,
+      withTimezone: true,
+    }).notNull(),
+    runTime: timestamp("run_time", {
+      precision: 3,
+      withTimezone: true,
+    }).notNull(),
+    // Stored, not derived — a key-scheme change must never orphan objects.
+    objectKey: text("object_key").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    west: doublePrecision("west").notNull(),
+    south: doublePrecision("south").notNull(),
+    east: doublePrecision("east").notNull(),
+    north: doublePrecision("north").notNull(),
+    scales: jsonb("scales").$type<JsonValue>().notNull(),
+    renderedAt: timestamp("rendered_at", {
+      precision: 3,
+      withTimezone: true,
+    }).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn(),
+  },
+  (t) => [
+    // Overwrite-in-place invariant + the manifest query
+    // (model = ? AND layer = ? AND validTime >= ? ORDER BY validTime).
+    uniqueIndex("weather_map_frame_model_layer_valid_idx").on(
+      t.model,
+      t.layer,
+      t.validTime,
+    ),
+  ],
+);
+
+export type WeatherMapFrame = typeof weatherMapFrameTable.$inferSelect;
+export type NewWeatherMapFrame = typeof weatherMapFrameTable.$inferInsert;
+
 // ─── activity / session (RFC-0006) ───────────────────────────────────────────
 // 4-layer storage (activity-data-model.md): L0 raw is write-once immutable; L1
 // derived is recomputable + carries algorithm/version metadata; L3 context is
@@ -779,6 +834,7 @@ export const dbSchema = {
   favorite: favoriteTable,
   weatherCache: weatherCacheTable,
   weatherModelMeta: weatherModelMetaTable,
+  weatherMapFrame: weatherMapFrameTable,
   activity: activityTable,
   activityTrack: activityTrackTable,
   activityCondition: activityConditionTable,

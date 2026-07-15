@@ -19,6 +19,7 @@ Ordered by dependency. Each step builds on the previous one.
 | **4** | [0005](0005-weather.md) | Weather & Conditions Decision Engine (Open-Meteo forecast/marine, per-sport verdicts + best-window, demand-driven cache + Trigger refresh) | feature/weather | ✅ Completed |
 | **5** | [0006](0006-activity.md) | Activity / Session (4-layer storage, gzip track upload to S3, canonical GPS metrics, efforts, equipment) | feature/activity | ✅ Completed (P0) |
 | **6** | [0010](0010-today-briefing.md) | Today Briefing (ranked top pick + alternatives + state + decision reasons, composed over favorites × conditions) | feature/briefing | ✅ Completed |
+| **7** | [0011](0011-weather-map-pipeline.md) | Weather-Map PNG Pipeline (per-valid-hour layer textures — wind/temp/precip/snow — rendered from `.om` runs → R2, manifest API) | feature/weathermap | ✅ Completed |
 | _later_ | [0007](0007-insights.md) | Insights (records, trends & aggregates across sessions) | feature/insights | 🗓️ Deferred |
 | _later_ | [0008](0008-alerts.md) | Condition Alerts (subscriptions + evaluation cron + push) | feature/alerts | 🗓️ Deferred |
 | _last_ | [0009](0009-subscription-notification.md) | Subscriptions (RevenueCat) & Push Notifications (APNs) | feature/subscription, platform/notification | 🗓️ Deferred |

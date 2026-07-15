@@ -31,6 +31,7 @@ export type {
   NewUserProfile,
   NewUserSportProfile,
   NewWeatherCache,
+  NewWeatherMapFrame,
   NewWeatherModelMeta,
   RefreshToken,
   Spot,
@@ -38,5 +39,6 @@ export type {
   UserProfile,
   UserSportProfile,
   WeatherCache,
+  WeatherMapFrame,
   WeatherModelMeta,
 } from "./schema";
