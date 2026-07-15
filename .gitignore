@@ -9,6 +9,8 @@ build/
 .env
 .env.local
 .env.*.local
+.gmkey_poc
+*.gmkey_poc
 
 # OS
 .DS_Store
@@ -32,3 +34,6 @@ coverage/
 
 # Trigger.dev
 .trigger/
+
+# Spot sourcing — raw Google Places harvest + POC scripts (local working data)
+spot-sourcing/
