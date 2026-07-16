@@ -337,8 +337,8 @@ describe("WeatherMapService", () => {
       expect(scales.hasRealGust).toBe(false); // no gust field either
     });
 
-    // 20 s budget: builds the real 1.4M-cell LAEA index map and encodes a
-    // real 1626×872 WebP — borderline against jest's 5 s default.
+    // 20 s budget: builds the real 1.1M-cell LAEA index map and encodes a
+    // real 1324×836 WebP — borderline against jest's 5 s default.
     it("reprojects LAEA models and stamps frames with the target grid + bbox", async () => {
       // UKV's native 1042×970 LAEA raster (uniform values — geometry is
       // unit-tested in laea-regrid.spec.ts; here we assert the wiring).
@@ -362,13 +362,15 @@ describe("WeatherMapService", () => {
 
       expect(summary.rendered).toBe(1);
       const upsert = mockRepo.upsertFrame.mock.calls[0][0];
-      expect(upsert.width).toBe(1626);
-      expect(upsert.height).toBe(872);
-      // The frame bbox is OUR target raster's, not the archive envelope's.
-      expect(upsert.west).toBeCloseTo(-17.16, 6);
-      expect(upsert.south).toBeCloseTo(44.5, 6);
-      expect(upsert.east).toBeCloseTo(15.36, 6);
-      expect(upsert.north).toBeCloseTo(61.94, 6);
+      // The INSCRIBED target raster (zero out-of-domain cells — see
+      // laea-regrid.ts), never the archive envelope: envelope corners would
+      // encode as fabricated calm inside a bbox the client trusts.
+      expect(upsert.width).toBe(1324);
+      expect(upsert.height).toBe(836);
+      expect(upsert.west).toBeCloseTo(-17.24, 6);
+      expect(upsert.south).toBeCloseTo(45.56, 6);
+      expect(upsert.east).toBeCloseTo(9.24, 6);
+      expect(upsert.north).toBeCloseTo(62.28, 6);
     }, 20_000);
 
     it("fails the hour when a LAEA source grid shape changes upstream", async () => {

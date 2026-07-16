@@ -11,8 +11,9 @@ import type { SpatialGrid } from "@/packages/om-spatial";
 // samples bilinearly anyway), spherical forward LAEA (Snyder / MathWorld) —
 // the exact inverse of Open-Meteo's own projection code
 // (`LambertAzimuthalEqualAreaProjection.swift`), whose parameters each spec
-// below copies verbatim. Target cells outside the source domain become NaN
-// (the encoders write the layer zero, same as any out-of-domain cell).
+// below copies verbatim. Every target cell MUST land inside the source
+// domain (the target is an inscribed box — see LAEA_MODELS); an
+// out-of-domain cell would encode as fake calm, so it throws instead.
 //
 // Wind needs no vector rotation: UKMO ships speed + METEOROLOGICAL direction
 // (geographic degrees-from-north), which stays valid under resampling —
@@ -51,8 +52,19 @@ export interface LaeaGridSpec {
  * LAEA models by data_spatial id. Projection + source-grid numbers are
  * copied from Open-Meteo's `UkmoDomain.swift` (verified 2026-07-16); the
  * target raster is ours: 0.02° (~2 km at 55°N longitudinally, slightly
- * coarser than the 2 km source meridionally) covering the source's lat/lon
- * envelope (W-17.153 S44.509 E15.353 N61.925).
+ * coarser than the 2 km source meridionally).
+ *
+ * The target is the largest lat/lon box INSCRIBED in the projected domain
+ * (numerically maximized + full-grid verified 2026-07-16), NOT the domain's
+ * lat/lon envelope. The envelope's corners fall outside the LAEA rectangle
+ * (14.7% of its cells), and out-of-domain wind encodes as u=v=gust=0 — the
+ * map would show FABRICATED dead calm where a coarser model has real data,
+ * because the client picks the finest model whose bbox covers the viewport.
+ * Inside the inscribed box every cell is real; the trimmed fringe (mostly
+ * the strip south of 45.56°N) falls back to ICON-EU / UKMO global.
+ * `regridLaea` enforces this at render time: an out-of-domain target cell
+ * throws instead of shipping fake calm. (Reclaiming the fringe would need a
+ * client-visible "no data" sentinel — alpha 0 — an RFC-0011 contract change.)
  */
 export const LAEA_MODELS: Record<string, LaeaGridSpec> = {
   ukmo_uk_deterministic_2km: {
@@ -66,12 +78,12 @@ export const LAEA_MODELS: Record<string, LaeaGridSpec> = {
     originXM: -1_158_000,
     originYM: -1_036_000,
     target: {
-      west: -17.16,
-      south: 44.5,
-      east: 15.36,
-      north: 61.94,
-      width: 1626, // (east - west) / 0.02
-      height: 872, // (north - south) / 0.02
+      west: -17.24,
+      south: 45.56,
+      east: 9.24,
+      north: 62.28,
+      width: 1324, // (east - west) / 0.02
+      height: 836, // (north - south) / 0.02
     },
   },
 };
@@ -132,8 +144,9 @@ function laeaIndexMap(spec: LaeaGridSpec): Int32Array {
 /**
  * Resample a native LAEA raster onto the spec's regular lat/lon target grid
  * (row 0 = SOUTH, the `.om` raster convention the encoders expect). Throws
- * on a source-shape mismatch — a silently changed upstream grid must fail
- * the hour loudly, never ship a mis-georeferenced frame.
+ * on a source-shape mismatch OR an out-of-domain target cell — a silently
+ * changed upstream grid or a drifted spec must fail the hour loudly, never
+ * ship a mis-georeferenced frame or fabricated-calm cells.
  */
 export function regridLaea(grid: SpatialGrid, spec: LaeaGridSpec): SpatialGrid {
   if (grid.width !== spec.nx || grid.height !== spec.ny) {
@@ -146,7 +159,12 @@ export function regridLaea(grid: SpatialGrid, spec: LaeaGridSpec): SpatialGrid {
   const out = new Float32Array(width * height);
   for (let i = 0; i < out.length; i++) {
     const src = map[i];
-    out[i] = src === -1 ? Number.NaN : grid.data[src];
+    if (src === -1) {
+      throw new Error(
+        `LAEA target cell ${i} falls outside the source domain — the spec's target box must stay inscribed in the projected rectangle`,
+      );
+    }
+    out[i] = grid.data[src];
   }
   return { width, height, data: out };
 }

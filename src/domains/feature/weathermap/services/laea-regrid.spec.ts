@@ -44,23 +44,37 @@ describe("laea-regrid", () => {
     expect(sourceIndex % spec.nx).toBe(579);
   });
 
-  it("marks target cells outside the projected source domain as NaN", () => {
+  it("covers EVERY target cell with real source data (inscribed box)", () => {
+    // The target box is inscribed in the projected domain, so no cell may
+    // fall outside it — an out-of-domain cell would encode as u=v=gust=0
+    // and the map would show fabricated dead calm over e.g. Biscay while a
+    // coarser model has real wind there. regridLaea throws on any -1, so a
+    // clean full-raster pass IS the zero-fake-cells guarantee.
     const out = regridLaea(
       sourceOf(() => 1),
       spec,
     );
-    const t = spec.target;
-    // The lat/lon bbox is the projected rectangle's envelope, so parts of
-    // the target raster fall outside the source domain (the SE corner
-    // does); the center is comfortably inside.
-    expect(out.data[t.width - 1]).toBeNaN(); // SE corner (row 0 = south)
-    expect(
-      out.data[Math.floor(t.height / 2) * t.width + Math.floor(t.width / 2)],
-    ).toBe(1);
-    const nanShare =
-      [...out.data].filter((v) => !Number.isFinite(v)).length / out.data.length;
-    expect(nanShare).toBeGreaterThan(0.05);
-    expect(nanShare).toBeLessThan(0.3);
+    expect(out.data.length).toBe(spec.target.width * spec.target.height);
+    expect([...out.data].every((v) => v === 1)).toBe(true);
+  });
+
+  it("throws (never fabricates calm) when the target box leaves the domain", () => {
+    // The old envelope box had ~14.7% of its cells outside the projected
+    // rectangle — that spec shape must now fail loudly at render time.
+    const envelope = {
+      ...spec,
+      target: {
+        west: -17.16,
+        south: 44.5,
+        east: 15.36,
+        north: 61.94,
+        width: 1626,
+        height: 872,
+      },
+    };
+    expect(() => regridLaea(sourceOf(() => 1), envelope)).toThrow(
+      /outside the source domain/,
+    );
   });
 
   it("throws on a source-shape mismatch instead of mis-georeferencing", () => {
