@@ -69,9 +69,10 @@ const MODEL_CONCURRENCY = 4;
  * Valid hours rendered concurrently inside ONE fan-out child
  * (`weathermap-render-model`), which has a whole machine to itself: 4
  * overlaps range reads with encodes across hours while stacking at most
- * ~½ GB of grids (~120 MB per global-model hour) — sized for the child's
- * medium-2x (4 GB) machine after long-horizon models took ~12 min per run
- * at 2 (2026-07-16).
+ * ~800 MB (~120 MB of grids per global-model hour + encode buffers) — fits
+ * the child's medium-1x (2 GB) machine with headroom. Raised from 2 after
+ * long-horizon models took ~12 min per run (2026-07-16); tune further from
+ * the run output's `profile` ratios, not by guessing.
  */
 const CHILD_HOUR_CONCURRENCY = 4;
 
@@ -95,6 +96,64 @@ async function mapLimit<T, R>(
   await Promise.all(workers);
   return results;
 }
+
+/** Explicit per-layer miss counts (summed across models) for the summary:
+ * `{ snowfall: 117 }` beats a bare total when reading a run's output. Layers
+ * with zero misses stay out. */
+function missingByLayer(
+  layerStats: { layer: string; missingVariable: number }[],
+): Record<string, number> {
+  const byLayer: Record<string, number> = {};
+  for (const stats of layerStats) {
+    if (stats.missingVariable > 0) {
+      byLayer[stats.layer] =
+        (byLayer[stats.layer] ?? 0) + stats.missingVariable;
+    }
+  }
+  return byLayer;
+}
+
+/**
+ * Cumulative phase timings in ms — the run output's own profiler, for
+ * spotting WHERE task-seconds (= Trigger cost) actually go. Summed across
+ * hours that render CONCURRENTLY, so totals can exceed wall-clock; read the
+ * RATIOS. `encodeMs` covers JS channel-packing + libvips WebP together;
+ * `regridMs` is pure JS (reduced-Gaussian + LAEA resampling).
+ */
+export interface WeatherMapRenderProfile {
+  fetchGridsMs: number;
+  regridMs: number;
+  encodeMs: number;
+  uploadMs: number;
+  dbMs: number;
+}
+
+const emptyProfile = (): WeatherMapRenderProfile => ({
+  fetchGridsMs: 0,
+  regridMs: 0,
+  encodeMs: 0,
+  uploadMs: 0,
+  dbMs: 0,
+});
+
+const addProfile = (
+  into: WeatherMapRenderProfile,
+  from: WeatherMapRenderProfile,
+): void => {
+  into.fetchGridsMs += from.fetchGridsMs;
+  into.regridMs += from.regridMs;
+  into.encodeMs += from.encodeMs;
+  into.uploadMs += from.uploadMs;
+  into.dbMs += from.dbMs;
+};
+
+const roundProfile = (p: WeatherMapRenderProfile): WeatherMapRenderProfile => ({
+  fetchGridsMs: Math.round(p.fetchGridsMs),
+  regridMs: Math.round(p.regridMs),
+  encodeMs: Math.round(p.encodeMs),
+  uploadMs: Math.round(p.uploadMs),
+  dbMs: Math.round(p.dbMs),
+});
 
 /**
  * Optional narrowing for a single refresh invocation (the force-run task and
@@ -126,8 +185,16 @@ export interface WeatherMapRefreshSummary {
   rendered: number;
   /** Layer-frames skipped because the file lacks the layer's variable. */
   missingVariable: number;
+  /**
+   * The same misses made EXPLICIT per layer (summed across models), e.g.
+   * `{ snowfall: 117 }` — so a run's output names WHAT was missing without
+   * digging through `layerStats`.
+   */
+  missingByLayer: Record<string, number>;
   /** Valid hours skipped after a failed (and once-retried) archive read. */
   frameErrors: number;
+  /** Where the task-seconds went (see WeatherMapRenderProfile). */
+  profile: WeatherMapRenderProfile;
   pruned: number;
   errors: { model: string; message: string }[];
   /**
@@ -224,7 +291,9 @@ export class WeatherMapService extends BaseUseCase {
       upToDate: 0,
       rendered: 0,
       missingVariable: 0,
+      missingByLayer: {},
       frameErrors: 0,
+      profile: emptyProfile(),
       pruned: 0,
       errors: [],
       layerStats: [],
@@ -291,11 +360,14 @@ export class WeatherMapService extends BaseUseCase {
       summary.rendered += result.rendered;
       summary.missingVariable += result.missingVariable;
       summary.frameErrors += result.frameErrors;
+      addProfile(summary.profile, result.profile);
       for (const [layer, stats] of Object.entries(result.layerStats)) {
         summary.layerStats.push({ model: result.model.id, layer, ...stats });
       }
     }
 
+    summary.missingByLayer = missingByLayer(summary.layerStats);
+    summary.profile = roundProfile(summary.profile);
     summary.pruned = await this.prune(now);
     return summary;
   }
@@ -366,19 +438,24 @@ export class WeatherMapService extends BaseUseCase {
       undefined,
       CHILD_HOUR_CONCURRENCY,
     );
+    const layerStats = Object.entries(result.layerStats).map(
+      ([layer, stats]) => ({
+        model: model.id,
+        layer,
+        ...stats,
+      }),
+    );
     return {
       checked: 1,
       upToDate: result.rendered === 0 ? 1 : 0,
       rendered: result.rendered,
       missingVariable: result.missingVariable,
+      missingByLayer: missingByLayer(layerStats),
       frameErrors: result.frameErrors,
+      profile: result.profile,
       pruned: 0,
       errors: [],
-      layerStats: Object.entries(result.layerStats).map(([layer, stats]) => ({
-        model: model.id,
-        layer,
-        ...stats,
-      })),
+      layerStats,
     };
   }
 
@@ -640,6 +717,7 @@ export class WeatherMapService extends BaseUseCase {
     run: string;
     status: "rendered" | "up-to-date" | "run-uploading";
     frameErrors: number;
+    profile: WeatherMapRenderProfile;
     layerStats: Record<string, { rendered: number; missingVariable: number }>;
   }> {
     const plan = await this.planModel(model, now, layers, horizonHours);
@@ -650,10 +728,14 @@ export class WeatherMapService extends BaseUseCase {
         run: plan.run,
         status: plan.status,
         frameErrors: 0,
+        profile: emptyProfile(),
         layerStats: {},
       };
     }
 
+    // One accumulator for the whole model render — concurrent hours add into
+    // it (single-threaded JS, so plain += is safe).
+    const profile = emptyProfile();
     const hourResults = await mapLimit(
       plan.work,
       hourConcurrency,
@@ -664,6 +746,7 @@ export class WeatherMapService extends BaseUseCase {
           plan.bbox,
           validTime,
           dueLayers,
+          profile,
         ),
     );
 
@@ -700,6 +783,7 @@ export class WeatherMapService extends BaseUseCase {
       frameErrors,
       run: plan.run,
       status: rendered > 0 ? "rendered" : "up-to-date",
+      profile: roundProfile(profile),
       layerStats,
     };
   }
@@ -712,6 +796,7 @@ export class WeatherMapService extends BaseUseCase {
     bbox: { west: number; south: number; east: number; north: number },
     validTime: Date,
     dueLayers: WeatherMapLayer[],
+    profile: WeatherMapRenderProfile,
   ): Promise<{
     frameError: boolean;
     rendered: string[];
@@ -725,12 +810,15 @@ export class WeatherMapService extends BaseUseCase {
     let frameBBox = bbox;
     let grids: Map<string, SpatialGrid>;
     try {
+      const fetchStart = performance.now();
       grids = await this.fetchGridsWithRetry(
         model.id,
         referenceTime,
         validTime,
         variables,
       );
+      profile.fetchGridsMs += performance.now() - fetchStart;
+      const regridStart = performance.now();
       // Reduced-Gaussian models (ECMWF IFS HRES) arrive as a flattened point
       // list, not a raster — resample onto the regular target grid before
       // the encoders see them. A non-octahedral point list throws here and
@@ -757,6 +845,7 @@ export class WeatherMapService extends BaseUseCase {
           north: laeaSpec.target.north,
         };
       }
+      profile.regridMs += performance.now() - regridStart;
     } catch (error) {
       logger.warn("weather-map valid time failed; skipping this hour", {
         model: model.id,
@@ -769,7 +858,9 @@ export class WeatherMapService extends BaseUseCase {
     const rendered: string[] = [];
     const missingVariable: string[] = [];
     for (const layer of dueLayers) {
+      const encodeStart = performance.now();
       const encoded = await this.encodeLayer(layer, grids);
+      profile.encodeMs += performance.now() - encodeStart;
       if (!encoded) {
         // The file genuinely lacks this layer's variable (e.g. snowfall in
         // summer runs) — not an error; the layer's manifest stays empty.
@@ -785,11 +876,14 @@ export class WeatherMapService extends BaseUseCase {
       // The PNG→WebP container switch changed this hour's object key: the
       // row is the bucket's only index, so the superseded object must go
       // NOW or it is orphaned forever (prune deletes by row key only).
+      const findStart = performance.now();
       const previous = await this.weatherMapRepository.findFrame(
         model.id,
         layer.id,
         validTime,
       );
+      profile.dbMs += performance.now() - findStart;
+      const putStart = performance.now();
       await this.objectStorage.put(objectKey, encoded.image, {
         contentType: "image/webp",
         // Manifest URLs carry ?v=<run> — every repaint is a NEW URL, so the
@@ -798,6 +892,8 @@ export class WeatherMapService extends BaseUseCase {
         // explicit invalidation.
         cacheControl: "public, max-age=31536000, immutable",
       });
+      profile.uploadMs += performance.now() - putStart;
+      const upsertStart = performance.now();
       await this.weatherMapRepository.upsertFrame({
         model: model.id,
         layer: layer.id,
@@ -813,6 +909,7 @@ export class WeatherMapService extends BaseUseCase {
         scales: encoded.scales as unknown as JsonValue,
         renderedAt: new Date(),
       });
+      profile.dbMs += performance.now() - upsertStart;
       if (previous && previous.objectKey !== objectKey) {
         try {
           await this.objectStorage.delete(previous.objectKey);

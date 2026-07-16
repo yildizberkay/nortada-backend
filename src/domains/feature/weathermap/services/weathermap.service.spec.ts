@@ -180,6 +180,12 @@ describe("WeatherMapService", () => {
       expect(tempUpsert).toMatchObject({
         scales: { min: 10, max: 40 },
       });
+      // The run output carries its own profiler — encode really ran (sharp),
+      // every phase is a non-negative cumulative ms counter.
+      expect(summary.profile.encodeMs).toBeGreaterThan(0);
+      for (const phase of Object.values(summary.profile)) {
+        expect(phase).toBeGreaterThanOrEqual(0);
+      }
     });
 
     it("renders the run's FULL remaining horizon by default (no cap)", async () => {
@@ -263,6 +269,8 @@ describe("WeatherMapService", () => {
 
       expect(summary.rendered).toBe(3);
       expect(summary.missingVariable).toBe(1);
+      // The explicit per-layer view: WHAT is missing, right in the output.
+      expect(summary.missingByLayer).toEqual({ snowfall: 1 });
       expect(summary.errors).toEqual([]);
       // The pivot's raw data: snowfall is marked missing, the rest rendered.
       expect(summary.layerStats).toEqual(
