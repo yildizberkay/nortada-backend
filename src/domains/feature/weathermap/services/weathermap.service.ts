@@ -116,23 +116,33 @@ function missingByLayer(
 /**
  * Cumulative phase timings in ms — the run output's own profiler, for
  * spotting WHERE task-seconds (= Trigger cost) actually go. Summed across
- * hours that render CONCURRENTLY, so totals can exceed wall-clock; read the
- * RATIOS. `encodeMs` covers JS channel-packing + libvips WebP together;
- * `regridMs` is pure JS (reduced-Gaussian + LAEA resampling).
+ * hours that render CONCURRENTLY, so totals can exceed `wallMs`; read the
+ * RATIOS. The encode pipeline is split by LANGUAGE because the fixes
+ * differ: `packMs` is single-threaded JS (u/v derivation + channel packing
+ * — a Rust/napi candidate), `webpMs` is native libvips/libwebp compression
+ * (tuned via WEBP_EFFORT / more vCPUs, never a rewrite). `regridMs` is pure
+ * JS (reduced-Gaussian + LAEA resampling). `uploadedBytes` sizes the effort
+ * trade-off; `wallMs` anchors the ratios to real elapsed time.
  */
 export interface WeatherMapRenderProfile {
+  wallMs: number;
   fetchGridsMs: number;
   regridMs: number;
-  encodeMs: number;
+  packMs: number;
+  webpMs: number;
   uploadMs: number;
+  uploadedBytes: number;
   dbMs: number;
 }
 
 const emptyProfile = (): WeatherMapRenderProfile => ({
+  wallMs: 0,
   fetchGridsMs: 0,
   regridMs: 0,
-  encodeMs: 0,
+  packMs: 0,
+  webpMs: 0,
   uploadMs: 0,
+  uploadedBytes: 0,
   dbMs: 0,
 });
 
@@ -140,18 +150,24 @@ const addProfile = (
   into: WeatherMapRenderProfile,
   from: WeatherMapRenderProfile,
 ): void => {
+  into.wallMs += from.wallMs;
   into.fetchGridsMs += from.fetchGridsMs;
   into.regridMs += from.regridMs;
-  into.encodeMs += from.encodeMs;
+  into.packMs += from.packMs;
+  into.webpMs += from.webpMs;
   into.uploadMs += from.uploadMs;
+  into.uploadedBytes += from.uploadedBytes;
   into.dbMs += from.dbMs;
 };
 
 const roundProfile = (p: WeatherMapRenderProfile): WeatherMapRenderProfile => ({
+  wallMs: Math.round(p.wallMs),
   fetchGridsMs: Math.round(p.fetchGridsMs),
   regridMs: Math.round(p.regridMs),
-  encodeMs: Math.round(p.encodeMs),
+  packMs: Math.round(p.packMs),
+  webpMs: Math.round(p.webpMs),
   uploadMs: Math.round(p.uploadMs),
+  uploadedBytes: p.uploadedBytes,
   dbMs: Math.round(p.dbMs),
 });
 
@@ -736,6 +752,7 @@ export class WeatherMapService extends BaseUseCase {
     // One accumulator for the whole model render — concurrent hours add into
     // it (single-threaded JS, so plain += is safe).
     const profile = emptyProfile();
+    const wallStart = performance.now();
     const hourResults = await mapLimit(
       plan.work,
       hourConcurrency,
@@ -777,6 +794,7 @@ export class WeatherMapService extends BaseUseCase {
         layerStat(layerId).missingVariable++;
       }
     }
+    profile.wallMs = performance.now() - wallStart;
     return {
       rendered,
       missingVariable,
@@ -858,9 +876,15 @@ export class WeatherMapService extends BaseUseCase {
     const rendered: string[] = [];
     const missingVariable: string[] = [];
     for (const layer of dueLayers) {
+      // packMs = everything JS around the encoder (u/v derivation + channel
+      // packing); webpMs = the native libvips compression inside it.
       const encodeStart = performance.now();
       const encoded = await this.encodeLayer(layer, grids);
-      profile.encodeMs += performance.now() - encodeStart;
+      const encodeTotal = performance.now() - encodeStart;
+      if (encoded) {
+        profile.webpMs += encoded.webpMs;
+        profile.packMs += encodeTotal - encoded.webpMs;
+      }
       if (!encoded) {
         // The file genuinely lacks this layer's variable (e.g. snowfall in
         // summer runs) — not an error; the layer's manifest stays empty.
@@ -893,6 +917,7 @@ export class WeatherMapService extends BaseUseCase {
         cacheControl: "public, max-age=31536000, immutable",
       });
       profile.uploadMs += performance.now() - putStart;
+      profile.uploadedBytes += encoded.image.length;
       const upsertStart = performance.now();
       await this.weatherMapRepository.upsertFrame({
         model: model.id,

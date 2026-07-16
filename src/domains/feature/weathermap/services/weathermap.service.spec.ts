@@ -180,9 +180,12 @@ describe("WeatherMapService", () => {
       expect(tempUpsert).toMatchObject({
         scales: { min: 10, max: 40 },
       });
-      // The run output carries its own profiler — encode really ran (sharp),
-      // every phase is a non-negative cumulative ms counter.
-      expect(summary.profile.encodeMs).toBeGreaterThan(0);
+      // The run output carries its own profiler — the native compression
+      // really ran (sharp), bytes were uploaded, and every phase is a
+      // non-negative cumulative counter.
+      expect(summary.profile.webpMs).toBeGreaterThan(0);
+      expect(summary.profile.uploadedBytes).toBeGreaterThan(0);
+      expect(summary.profile.wallMs).toBeGreaterThan(0);
       for (const phase of Object.values(summary.profile)) {
         expect(phase).toBeGreaterThanOrEqual(0);
       }

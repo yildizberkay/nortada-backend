@@ -493,11 +493,16 @@ under `activities/`).
   tagged `model:<id>` — per-model history is one dashboard filter.
 - `profile` is the run output's own profiler (2026-07-16, for the cost
   story): cumulative ms per phase — fetchGridsMs (archive range reads),
-  regridMs (reduced-Gaussian + LAEA JS resampling), encodeMs (JS channel
-  packing + libvips WebP), uploadMs (R2 puts), dbMs (frame find/upsert).
-  Summed across concurrently-rendering hours, so totals exceed wall-clock —
-  read the ratios to see where task-seconds (= Trigger spend) go before
-  tuning machines/concurrency further.
+  regridMs (reduced-Gaussian + LAEA JS resampling), packMs (single-threaded
+  JS: u/v derivation + channel packing — the Rust/napi candidate), webpMs
+  (native libvips/libwebp compression — tuned via WEBP_EFFORT/vCPUs, never a
+  rewrite), uploadMs + uploadedBytes (R2 puts; bytes size the effort
+  trade-off), dbMs (frame find/upsert), wallMs (the model render's real
+  elapsed time). Phase totals are summed across concurrently-rendering
+  hours, so they exceed wallMs — read the ratios to see where task-seconds
+  (= Trigger spend) go before tuning machines/concurrency further. First
+  prod reading (metno_nordic_pp, 2026-07-16, pre-split): encode ≈ 80% of
+  task-seconds, fetch ≈ 13% — the pipeline is compression-bound.
 - `Tracking.captureException` per failing model with `{ model }` context so
   one broken feed pages without hiding the other 19 (plan errors in the
   orchestrator; render errors in the failing child only).

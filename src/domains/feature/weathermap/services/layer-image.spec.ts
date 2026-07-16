@@ -37,6 +37,8 @@ describe("encodeWindLayer", () => {
     // VP8L chunk = lossless bitstream; a lossy frame would decode to
     // DIFFERENT bytes and silently corrupt the wind field.
     expect(encoded.image.includes(Buffer.from("VP8L"))).toBe(true);
+    // The profiler's native-compression split: time really spent in libvips.
+    expect(encoded.webpMs).toBeGreaterThan(0);
   });
 
   it("round-trips every byte exactly (data texture, not a picture)", async () => {
@@ -224,6 +226,7 @@ describe("encodeScalarLayer", () => {
     // Source row 0 = south: [10, 20]; row 1 = north: [30, 40].
     const encoded = await encodeScalarLayer(grid([10, 20, 30, 40]));
     expect(encoded.scales).toEqual({ min: 10, max: 40 });
+    expect(encoded.webpMs).toBeGreaterThan(0);
     const image = await decode(encoded.image);
     // Texture row 0 = north: values 30, 40.
     expect(image.data[0]).toBe(170); // (30-10)/30 → 170

@@ -58,6 +58,10 @@ export interface EncodedLayerImage {
   width: number;
   height: number;
   scales: LayerScales;
+  /** Time spent INSIDE the libvips WebP compression (`sharp().toBuffer()`),
+   * so callers can split "JS packing" from "native compression" when
+   * profiling — the two need entirely different optimizations. */
+  webpMs: number;
 }
 
 /** Raw RGBA → lossless WebP. Split out so the packing loops stay sync and
@@ -72,11 +76,13 @@ async function toLosslessWebP(
   raw: Buffer,
   width: number,
   height: number,
-): Promise<Buffer> {
+): Promise<{ image: Buffer; webpMs: number }> {
   const { default: sharp } = await import("sharp");
-  return sharp(raw, { raw: { width, height, channels: 4 } })
+  const start = performance.now();
+  const image = await sharp(raw, { raw: { width, height, channels: 4 } })
     .webp({ lossless: true, effort: WEBP_EFFORT })
     .toBuffer();
+  return { image, webpMs: performance.now() - start };
 }
 
 /**
@@ -185,12 +191,8 @@ export async function encodeWindLayer(
     }
   }
 
-  return {
-    image: await toLosslessWebP(out, width, height),
-    width,
-    height,
-    scales,
-  };
+  const { image, webpMs } = await toLosslessWebP(out, width, height);
+  return { image, width, height, scales, webpMs };
 }
 
 /** Encode a single-variable layer (temperature, precipitation, …) into R. */
@@ -236,12 +238,8 @@ export async function encodeScalarLayer(
     }
   }
 
-  return {
-    image: await toLosslessWebP(out, width, height),
-    width,
-    height,
-    scales,
-  };
+  const { image, webpMs } = await toLosslessWebP(out, width, height);
+  return { image, width, height, scales, webpMs };
 }
 
 /**
