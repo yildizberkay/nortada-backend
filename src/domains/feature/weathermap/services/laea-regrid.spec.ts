@@ -72,9 +72,12 @@ describe("laea-regrid", () => {
         height: 872,
       },
     };
-    expect(() => regridLaea(sourceOf(() => 1), envelope)).toThrow(
-      /outside the source domain/,
-    );
+    expect(() =>
+      regridLaea(
+        sourceOf(() => 1),
+        envelope,
+      ),
+    ).toThrow(/outside the source domain/);
   });
 
   it("throws on a source-shape mismatch instead of mis-georeferencing", () => {

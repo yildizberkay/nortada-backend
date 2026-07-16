@@ -67,12 +67,13 @@ const MODEL_CONCURRENCY = 4;
 
 /**
  * Valid hours rendered concurrently inside ONE fan-out child
- * (`weathermap-render-model`), which has a whole machine to itself: 2
- * overlaps the next hour's range reads with the current hour's encode
- * without stacking more than two hours' grids (~100 MB each for a global
- * model) on the child machine.
+ * (`weathermap-render-model`), which has a whole machine to itself: 4
+ * overlaps range reads with encodes across hours while stacking at most
+ * ~½ GB of grids (~120 MB per global-model hour) — sized for the child's
+ * medium-2x (4 GB) machine after long-horizon models took ~12 min per run
+ * at 2 (2026-07-16).
  */
-const CHILD_HOUR_CONCURRENCY = 2;
+const CHILD_HOUR_CONCURRENCY = 4;
 
 /** `map` with at most `limit` callbacks in flight; result order preserved. */
 async function mapLimit<T, R>(
@@ -473,7 +474,13 @@ export class WeatherMapService extends BaseUseCase {
       frames: frames.map((f) => ({
         validTime: f.validTime.toISOString(),
         runTime: f.runTime.toISOString(),
-        url: this.frameUrl(modelId, layerId, f.objectKey, f.validTime),
+        url: this.frameUrl(
+          modelId,
+          layerId,
+          f.objectKey,
+          f.validTime,
+          f.runTime,
+        ),
         width: f.width,
         height: f.height,
         bbox: { west: f.west, south: f.south, east: f.east, north: f.north },
@@ -785,6 +792,11 @@ export class WeatherMapService extends BaseUseCase {
       );
       await this.objectStorage.put(objectKey, encoded.image, {
         contentType: "image/webp",
+        // Manifest URLs carry ?v=<run> — every repaint is a NEW URL, so the
+        // bytes behind any one URL never change and may cache forever. This
+        // is what lets the CDN keep serving repainted keys correctly without
+        // explicit invalidation.
+        cacheControl: "public, max-age=31536000, immutable",
       });
       await this.weatherMapRepository.upsertFrame({
         model: model.id,
@@ -904,12 +916,18 @@ export class WeatherMapService extends BaseUseCase {
     layerId: string,
     objectKey: string,
     validTime: Date,
+    runTime: Date,
   ): string {
+    // Frames repaint IN PLACE (a newer run overwrites the same key), so the
+    // bare URL is cacheable-stale by design. The run stamp busts every cache
+    // in the chain — CDN edge, URLSession, proxies — because a repaint mints
+    // a DIFFERENT URL; the objects themselves upload immutable.
+    const version = `v=${Math.floor(runTime.getTime() / 1000)}`;
     const publicBase = this.config.objectStorage.publicBaseUrl;
     if (publicBase) {
-      return `${publicBase.replace(/\/+$/, "")}/${objectKey}`;
+      return `${publicBase.replace(/\/+$/, "")}/${objectKey}?${version}`;
     }
-    return `/v1/weather-map/frames/${modelId}/${layerId}/${frameFileName(validTime)}`;
+    return `/v1/weather-map/frames/${modelId}/${layerId}/${frameFileName(validTime)}?${version}`;
   }
 }
 

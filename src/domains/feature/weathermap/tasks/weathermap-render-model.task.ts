@@ -23,17 +23,19 @@ import {
  * `maxDuration` covers a cold-start backfill of the longest-horizon model in
  * one run; a cut-off run resumes on retry / next orchestration because frames
  * upsert one by one.
- * Machine: medium-1x (2 GB) — small-2x (1 GB) OOM-killed in prod 2026-07-16
- * (global models hold ~120 MB of grids per in-flight hour × 2 concurrent
- * hours, plus sharp encode buffers; UKMO Global 10 km raised the ceiling
- * further). */
+ * Machine: medium-2x (2 vCPU / 4 GB) — small-2x (1 GB) OOM-killed in prod
+ * 2026-07-16 (global models hold ~120 MB of grids per in-flight hour, plus
+ * sharp encode buffers; UKMO Global 10 km raised the ceiling further), and
+ * long-horizon models took ~12 min per run at 2 concurrent hours — the 4 GB
+ * preset funds `CHILD_HOUR_CONCURRENCY = 4` (~½ GB of grids in flight) and
+ * the second vCPU overlaps encodes. */
 export const weathermapRenderModelTask = schemaTask({
   id: WEATHERMAP_RENDER_MODEL_TASK_ID,
   schema: weathermapRenderModelSchema,
-  machine: "medium-1x",
+  machine: "medium-2x",
   maxDuration: 3600,
   retry: { maxAttempts: 3 },
-  queue: { concurrencyLimit: 6 },
+  queue: { concurrencyLimit: 10 },
   run: async (payload) => {
     initializeForTrigger();
     const dbManager = await createDBManagerForTrigger();

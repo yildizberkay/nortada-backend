@@ -383,16 +383,17 @@ without failing the tick.
 
 ### `weathermap-render-model` (fan-out child)
 
-`schemaTask`, payload `{ model }`, `machine: "medium-1x"` (bumped from
-small-2x after a prod OOM kill 2026-07-16 — global models hold ~120 MB of
-grids per in-flight hour × 2 concurrent hours plus encode buffers),
-`maxDuration` 3600,
-`retry.maxAttempts: 3`, `queue.concurrencyLimit: 6`. Calls
+`schemaTask`, payload `{ model }`, `machine: "medium-2x"` (small-2x
+OOM-killed in prod 2026-07-16 — global models hold ~120 MB of grids per
+in-flight hour plus encode buffers; then medium-1x still left long-horizon
+models at ~12 min/run, so the 4 GB / 2 vCPU preset funds 4 concurrent hours
+and overlapped encodes), `maxDuration` 3600,
+`retry.maxAttempts: 3`, `queue.concurrencyLimit: 10`. Calls
 `weatherMapService.refreshModelById(model)`: re-reads `latest.json` (if the
 run advanced since planning, the child renders the newer one) and renders
-every due frame of that one model, with **`CHILD_HOUR_CONCURRENCY = 2`** valid
-hours in flight (overlaps the next hour's range reads with the current hour's
-encode without stacking more than ~2 × 100 MB of grids on the machine).
+every due frame of that one model, with **`CHILD_HOUR_CONCURRENCY = 4`** valid
+hours in flight (overlaps range reads with encodes while stacking at most
+~½ GB of grids on the machine).
 
 - The queue limit bounds how many models render at once **across machines** —
   every child hits the same Open-Meteo archive host, so it is a rate-limit
@@ -497,7 +498,7 @@ under `activities/`).
 Parallelism operates at three levels; bounds are deliberate:
 
 - **Across models** — the cron path fans out one Trigger.dev run per due
-  model, so models parallelize across MACHINES; `queue.concurrencyLimit: 6`
+  model, so models parallelize across MACHINES; `queue.concurrencyLimit: 10`
   on the child bounds simultaneous renders because every child range-reads
   the same archive host (a rate-limit bound — memory is per-machine). The
   in-process paths (`planRefresh`, and `refresh` for force-run/CLI) use a
@@ -509,9 +510,9 @@ Parallelism operates at three levels; bounds are deliberate:
   byte-identical vs sequential; 2.5 s → 0.8 s for 5 ICON-EU variables), and
   child enumeration is parallel-by-index (~0.6 s vs ~15 s sequential
   `getChildByName` scans).
-- **Valid times within a model** — `CHILD_HOUR_CONCURRENCY = 2` in a fan-out
-  child (a whole machine to itself: the next hour's range reads overlap the
-  current hour's encode without stacking more than two hours' grids);
+- **Valid times within a model** — `CHILD_HOUR_CONCURRENCY = 4` in a fan-out
+  child (a whole machine to itself: range reads overlap encodes across hours
+  while stacking at most ~½ GB of grids on the medium-2x machine);
   sequential in the in-process `refresh`, which already runs 4 models in one
   process. One valid time failing (transient archive error) is retried once
   and then skipped in isolation (`frameErrors` in the summary) — a later
@@ -637,10 +638,10 @@ forward.
   `prune`) instead of one monolithic render run. Idempotency: global-scoped
   `(model, referenceTime)` key with 1 h TTL — dedupes while a child works a
   run, re-fans an incomplete render afterwards. Child knobs are design
-  constants like everything else: `machine medium-1x` (small-2x OOM-killed
-  in prod 2026-07-16), `maxDuration 3600`,
-  `queue.concurrencyLimit 6` (archive-host rate bound),
-  `CHILD_HOUR_CONCURRENCY 2`.
+  constants like everything else: `machine medium-2x` (small-2x OOM-killed
+  in prod 2026-07-16; medium-1x still ~12 min on long-horizon models),
+  `maxDuration 3600`, `queue.concurrencyLimit 10` (archive-host rate bound),
+  `CHILD_HOUR_CONCURRENCY 4`.
 - **Open — perpetually-due missing variables:** a layer whose variable a
   model never publishes (e.g. snowfall in summer) has no frame row, so its
   hours stay "due" and every tick fans out a child that range-reads and

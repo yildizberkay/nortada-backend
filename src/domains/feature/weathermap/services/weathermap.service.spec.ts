@@ -148,15 +148,23 @@ describe("WeatherMapService", () => {
           "snowfall",
         ]),
       );
+      // Objects upload immutable — the manifest's `?v=<run>` stamp mints a
+      // new URL when a newer run repaints the same key.
       expect(mockStorage.put).toHaveBeenCalledWith(
         "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.webp",
         expect.any(Buffer),
-        { contentType: "image/webp" },
+        {
+          contentType: "image/webp",
+          cacheControl: "public, max-age=31536000, immutable",
+        },
       );
       expect(mockStorage.put).toHaveBeenCalledWith(
         "weather-map/dwd_icon_d2/temperature/2026-07-15T1200Z.webp",
         expect.any(Buffer),
-        { contentType: "image/webp" },
+        {
+          contentType: "image/webp",
+          cacheControl: "public, max-age=31536000, immutable",
+        },
       );
       const windUpsert = mockRepo.upsertFrame.mock.calls
         .map(([values]) => values)
@@ -694,9 +702,10 @@ describe("WeatherMapService", () => {
       expect(manifest.layer).toBe("temperature");
       expect(manifest.unit).toBe("°C");
       expect(manifest.run).toBe(RUN.toISOString());
+      // `?v=<run epoch s>` busts caches when a newer run repaints the key.
       expect(manifest.frames[0]).toMatchObject({
         validTime: NOON.toISOString(),
-        url: "/v1/weather-map/frames/dwd_icon_d2/temperature/2026-07-15T1200Z.webp",
+        url: `/v1/weather-map/frames/dwd_icon_d2/temperature/2026-07-15T1200Z.webp?v=${Math.floor(OLDER_RUN.getTime() / 1000)}`,
         bbox: BBOX,
         scales: { min: 10, max: 40 },
       });
@@ -712,7 +721,7 @@ describe("WeatherMapService", () => {
       const manifest = await service.getManifest("dwd_icon_d2", "wind");
 
       expect(manifest.frames[0].url).toBe(
-        "https://cdn.nortada.app/weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.webp",
+        `https://cdn.nortada.app/weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.webp?v=${Math.floor(RUN.getTime() / 1000)}`,
       );
     });
 

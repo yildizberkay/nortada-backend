@@ -14,6 +14,8 @@ const logger = createLogger("object-storage");
 export interface PutOptions {
   contentType?: string;
   contentEncoding?: string;
+  /** Serving cache policy (R2 custom domains honor object metadata). */
+  cacheControl?: string;
 }
 
 /**
@@ -78,6 +80,7 @@ export class S3ObjectStorage implements ObjectStorage {
           Body: body,
           ContentType: options?.contentType,
           ContentEncoding: options?.contentEncoding,
+          CacheControl: options?.cacheControl,
         }),
       );
     } catch (error) {
