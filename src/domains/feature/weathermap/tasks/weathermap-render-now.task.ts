@@ -24,6 +24,10 @@ import {
 export const weathermapRenderNowTask = schemaTask({
   id: WEATHERMAP_RENDER_NOW_TASK_ID,
   schema: weathermapRenderNowSchema,
+  // The full in-process pass holds up to MODEL_CONCURRENCY (4) models' grids
+  // at once (~100 MB each for a global hour) — the 0.5 GB default OOMs; the
+  // per-model child only ever holds 2 hours of ONE model, hence its small-2x.
+  machine: "medium-1x",
   maxDuration: 900,
   retry: { maxAttempts: 1 },
   queue: { concurrencyLimit: 1 },
