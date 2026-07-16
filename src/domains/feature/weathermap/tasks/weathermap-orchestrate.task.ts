@@ -8,6 +8,7 @@ import { Tracking } from "@/app/tracking";
 import { buildContainer } from "@/container";
 import { createDBManagerForTrigger } from "@/db/db.manager";
 
+import { findWeatherMapModel } from "../models";
 import { weathermapRenderModelTask } from "./weathermap-render-model.task";
 
 const TASK_ID = "weathermap-orchestrate";
@@ -53,6 +54,11 @@ export const weathermapOrchestrateTask = schedules.task({
               ),
               idempotencyKeyTTL: "1h",
               tags: [`model:${due.model}`],
+              // DYNAMIC machine per model (registry `renderMachine`):
+              // grid-heavy globals get medium-2x, the rest stay on the
+              // task's default medium-1x — the child's adaptive hour
+              // concurrency then sizes itself to the machine it got.
+              machine: findWeatherMapModel(due.model)?.renderMachine,
             },
           })),
         );

@@ -384,29 +384,33 @@ without failing the tick.
 
 ### `weathermap-render-model` (fan-out child)
 
-`schemaTask`, payload `{ model }`, `machine: "medium-1x"` — the cost-optimal
-preset: same per-second price as small-2x (which OOM-killed in prod
-2026-07-16 — global models hold ~120 MB of grids per in-flight hour plus
-encode buffers) while its 2 GB funds 4 concurrent hours; the ~12 min
-long-horizon runs are attacked with parallelism, not a 2×-price medium-2x
-whose second vCPU can't speed the single-threaded JS packing loops. Revisit
-against the run output's `profile` ratios (§11). `maxDuration` 3600,
-`retry.maxAttempts: 3`, `queue.concurrencyLimit: 10`. Calls
-`weatherMapService.refreshModelById(model)`: re-reads `latest.json` (if the
-run advanced since planning, the child renders the newer one) and renders
-every due frame of that one model, with up to **`CHILD_HOUR_CONCURRENCY =
-4`** valid hours in flight — ADAPTIVE per model (2026-07-16): the first hour
-renders alone and its measured grid bytes decide how many of the remaining
-hours fit the memory budget (`adaptiveHourConcurrency`: 1.4 GB budget ÷
-(measured bytes × 2.0 safety + 150 MB fixed per-hour overhead — the reader's
-64 MB wasm heap + encode buffers)). The safety is 2.0 because the OOM killer
-sees RSS, not live bytes: freed grid pages return to the OS lazily, and the
-first calibration (×1.3, live-bytes thinking) still OOM-killed `ecmwf_ifs`.
-An hour's weight varies ~3× across models (regional ~100 MB vs `ecmwf_ifs`
-~300 MB with its regrid copies): regionals keep 4, UKMO global gets 3,
-`ecmwf_ifs` renders sequentially — slower beats OOM-killed on the 2 GB
-machine. Consumed layer grids are dropped as soon as their layer encodes,
-trimming the peak further.
+`schemaTask`, payload `{ model }`, machine **DYNAMIC per model**
+(2026-07-16): the task default is `medium-1x` (2 GB); the orchestrator
+requests the registry's `renderMachine` at trigger time — `medium-2x`
+(4 GB) for the grid-heavy globals (`ecmwf_ifs`, `ukmo_global_deterministic_10km`, `dwd_icon`,
+`ncep_gfs013`) — and the child reads its ACTUAL machine from `ctx.machine`.
+Sized by MEASURED prod RSS, not presets-by-feel: two one-size-fits-all
+machines OOM-killed in sequence (small-2x at fixed concurrency, then
+medium-1x where even a LIGHT model's successful run peaked at 1.90 GB
+maxRssBytes — Linux glibc keeps freed grid/encode pages in per-thread
+arenas, so RSS tracks the historical high-water mark, not live bytes — and
+`ecmwf_ifs` OOM-killed even sequentially; a crashed run is 100% wasted
+spend). `maxDuration` 3600, `retry.maxAttempts: 3`,
+`queue.concurrencyLimit: 10`. Calls
+`weatherMapService.refreshModelById(model, now, machineMemoryBytes)`:
+re-reads `latest.json` (if the run advanced since planning, the child
+renders the newer one) and renders every due frame of that one model, with
+up to **`CHILD_HOUR_CONCURRENCY = 4`** valid hours in flight — ADAPTIVE per
+model AND machine: the first hour renders alone and its measured grid bytes
+decide how many of the remaining hours fit
+(`adaptiveHourConcurrency`: (machine memory − 1280 MiB reserved for the
+Node baseline + glibc retention floor) ÷ (measured bytes × 2.0 safety +
+150 MB fixed per-hour overhead — the reader's 64 MB wasm heap + encode
+buffers)). Resulting spread: regionals on medium-1x get 2, the medium-2x
+globals keep 4, `ecmwf_ifs` (~300 MiB hours with its regrid copies) gets 3.
+Consumed layer grids are dropped as soon as their layer encodes, trimming
+the peak further. Revisit the reserve if maxRssBytes lands well below the
+machine (e.g. after a MALLOC_ARENA_MAX=2 env experiment).
 
 - The queue limit bounds how many models render at once **across machines** —
   every child hits the same Open-Meteo archive host, so it is a rate-limit
@@ -669,15 +673,15 @@ forward.
   `prune`) instead of one monolithic render run. Idempotency: global-scoped
   `(model, referenceTime)` key with 1 h TTL — dedupes while a child works a
   run, re-fans an incomplete render afterwards. Child knobs are design
-  constants like everything else: `machine medium-1x` (small-2x price, 2 GB
-  — small-2x OOM-killed in prod 2026-07-16; the ~12 min long-horizon runs
-  are attacked with hour-parallelism, not a 2×-price machine),
-  `maxDuration 3600`, `queue.concurrencyLimit 10` (archive-host rate bound),
-  `CHILD_HOUR_CONCURRENCY 4` (a CAP — effective concurrency adapts to the
-  model's measured hour bytes, §8). Per-run machine overrides
-  (`trigger(..., { machine })`) stay an OPTIONAL future speed knob for a
-  heavy model whose adaptive (lower) concurrency proves too slow — decide
-  from the profile's `hourGridBytes`/`maxRssBytes`, never preemptively.
+  constants like everything else: machine DYNAMIC per model (default
+  medium-1x; the registry's `renderMachine` sends grid-heavy globals to
+  medium-2x — adopted 2026-07-16 after the measured 1.90 GB maxRssBytes of
+  a light model's successful run on 2 GB and ecmwf_ifs OOM-killing there
+  even sequentially), `maxDuration 3600`, `queue.concurrencyLimit 10`
+  (archive-host rate bound), `CHILD_HOUR_CONCURRENCY 4` (a CAP — effective
+  concurrency adapts to the model's measured hour bytes AND the machine's
+  memory via `ctx.machine`, §8). Machine assignments are re-decided from
+  the profile's `hourGridBytes`/`maxRssBytes`, never by feel.
 - **Open — perpetually-due missing variables:** a layer whose variable a
   model never publishes (e.g. snowfall in summer) has no frame row, so its
   hours stay "due" and every tick fans out a child that range-reads and

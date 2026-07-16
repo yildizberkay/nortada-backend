@@ -721,21 +721,25 @@ describe("WeatherMapService", () => {
 
   describe("adaptiveHourConcurrency", () => {
     const MB = 1024 * 1024;
+    const GB = 1024 * MB;
 
-    it("keeps the cap for light regional hours (MET Nordic ≈ 100 MB)", () => {
-      expect(adaptiveHourConcurrency(100 * MB, 4)).toBe(4);
+    it("sizes to the DEFAULT machine (medium-1x, 2 GB) — regionals get 2", () => {
+      expect(adaptiveHourConcurrency(83 * MB, 4)).toBe(2); // MET Nordic
+      expect(adaptiveHourConcurrency(100 * MB, 4)).toBe(2);
     });
 
-    it("drops a notch for global rasters (UKMO global ≈ 120 MiB)", () => {
-      expect(adaptiveHourConcurrency(120 * MB, 4)).toBe(3);
+    it("keeps the cap on the heavies' medium-2x (4 GB) for global rasters", () => {
+      expect(adaptiveHourConcurrency(100 * MB, 4, 4 * GB)).toBe(4); // dwd_icon/GFS
+      expect(adaptiveHourConcurrency(120 * MB, 4, 4 * GB)).toBe(4); // UKMO global
     });
 
-    it("goes sequential for grid-heavy hours (ECMWF IFS ≈ 300 MiB with regrid copies)", () => {
-      expect(adaptiveHourConcurrency(300 * MB, 4)).toBe(1);
+    it("gives ECMWF IFS (~300 MiB hours) 3 on its medium-2x", () => {
+      expect(adaptiveHourConcurrency(300 * MB, 4, 4 * GB)).toBe(3);
     });
 
-    it("never goes below one, however heavy the hour", () => {
-      expect(adaptiveHourConcurrency(1500 * MB, 4)).toBe(1);
+    it("never goes below one, however heavy the hour or small the machine", () => {
+      expect(adaptiveHourConcurrency(1500 * MB, 4, 4 * GB)).toBe(1);
+      expect(adaptiveHourConcurrency(300 * MB, 4)).toBe(1); // heavy on 2 GB
     });
 
     it("falls back to the cap when the first hour never measured", () => {
@@ -743,7 +747,7 @@ describe("WeatherMapService", () => {
     });
 
     it("respects a lower caller cap (the in-process refresh path uses 1)", () => {
-      expect(adaptiveHourConcurrency(100 * MB, 1)).toBe(1);
+      expect(adaptiveHourConcurrency(100 * MB, 1, 4 * GB)).toBe(1);
     });
   });
 

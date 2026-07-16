@@ -11,6 +11,9 @@
 //   covers the family with surface fields at higher resolution. The 0.25°
 //   files become relevant only if we ever ship an upper-air layer.
 
+/** Trigger machine presets a render child may request. */
+export type WeatherMapRenderMachine = "medium-1x" | "medium-2x" | "large-1x";
+
 export interface WeatherMapModel {
   /** `data_spatial` model id — also the public id in the API + object keys. */
   id: string;
@@ -19,6 +22,14 @@ export interface WeatherMapModel {
   /** Approximate native grid resolution, for the client's model picker. */
   resolutionKm: number;
   enabled: boolean;
+  /**
+   * Machine the orchestrator requests for this model's render child —
+   * absent = the task's default (medium-1x). Grid-heavy models get
+   * medium-2x so the machine-aware adaptive concurrency (§8) can keep
+   * their hour-parallelism instead of crawling; sized from measured
+   * profiles (`hourGridBytes`/`maxRssBytes`), never by feel.
+   */
+  renderMachine?: WeatherMapRenderMachine;
 }
 
 export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
@@ -28,6 +39,7 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     provider: "DWD",
     resolutionKm: 11,
     enabled: true,
+    renderMachine: "medium-2x", // global raster, ~100 MiB hours
   },
   {
     id: "dwd_icon_eu",
@@ -52,6 +64,9 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     provider: "ECMWF",
     resolutionKm: 9,
     enabled: true,
+    // The fleet's heaviest hours (~300 MiB: point-list sources + regrid
+    // targets coexist) — OOM-killed 2 GB machines even sequentially.
+    renderMachine: "medium-2x",
   },
   {
     id: "ecmwf_ifs025",
@@ -94,6 +109,7 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     provider: "NOAA NCEP",
     resolutionKm: 13,
     enabled: true,
+    renderMachine: "medium-2x", // global raster (2879×1441), ~100 MiB hours
   },
   {
     id: "meteofrance_arpege_world025",
@@ -167,6 +183,7 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     provider: "UK Met Office",
     resolutionKm: 10,
     enabled: true,
+    renderMachine: "medium-2x", // global raster (2560×1920), ~120 MiB hours
   },
   // Published as a NATIVE Lambert-Azimuthal projected raster, not lat/lon
   // (verified live 2026-07-16: zero NaN fringe + r=0.61 vs UKMO global under

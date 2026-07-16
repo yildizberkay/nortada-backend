@@ -23,16 +23,16 @@ import {
  * `maxDuration` covers a cold-start backfill of the longest-horizon model in
  * one run; a cut-off run resumes on retry / next orchestration because frames
  * upsert one by one.
- * Machine: medium-1x (1 vCPU / 2 GB) — the cost-optimal preset: same
- * per-second price as small-2x (which OOM-killed in prod 2026-07-16; global
- * models hold ~120 MB of grids per in-flight hour plus encode buffers), and
- * 2 GB funds up to `CHILD_HOUR_CONCURRENCY = 4` concurrent hours (ADAPTIVE
- * per model: the first hour's measured grid bytes decide how many fit the
- * memory budget — grid-heavy models drop down instead of OOMing) — the
- * ~12 min long-horizon runs with parallelism instead of a 2×-price
- * medium-2x whose second vCPU can't speed up the single-threaded JS packing
- * loops anyway. Revisit against the run output's `profile` ratios: encode-
- * dominated → medium-2x or a lower WEBP_EFFORT; fetch-dominated → this. */
+ * Machine: DYNAMIC per model — this preset (medium-1x, 2 GB) is only the
+ * default; the orchestrator requests the registry's `renderMachine`
+ * (medium-2x for the grid-heavy globals) at trigger time, and the adaptive
+ * hour concurrency reads the ACTUAL machine from `ctx.machine`, so light
+ * regionals render cheaply while heavies get the memory they measurably
+ * need. Sized from prod RSS data (2026-07-16): on 2 GB even a light model's
+ * successful run peaked at maxRssBytes 1.90 GB (glibc keeps freed pages in
+ * per-thread arenas — RSS tracks the high-water mark, not live bytes) and
+ * `ecmwf_ifs` OOM-killed there even sequentially; a crashed run is 100%
+ * wasted spend. */
 export const weathermapRenderModelTask = schemaTask({
   id: WEATHERMAP_RENDER_MODEL_TASK_ID,
   schema: weathermapRenderModelSchema,
@@ -40,13 +40,22 @@ export const weathermapRenderModelTask = schemaTask({
   maxDuration: 3600,
   retry: { maxAttempts: 3 },
   queue: { concurrencyLimit: 10 },
-  run: async (payload) => {
+  run: async (payload, { ctx }) => {
     initializeForTrigger();
     const dbManager = await createDBManagerForTrigger();
     try {
+      // ctx.machine.memory is in GB — the adaptive hour concurrency sizes
+      // itself to whatever machine the orchestrator actually requested.
+      const machineMemoryBytes = ctx.machine?.memory
+        ? ctx.machine.memory * 1024 * 1024 * 1024
+        : undefined;
       const summary = await buildContainer(
         dbManager,
-      ).weatherMapService.refreshModelById(payload.model);
+      ).weatherMapService.refreshModelById(
+        payload.model,
+        new Date(),
+        machineMemoryBytes,
+      );
       logger.info("Weather-map model render done", { ...summary, ...payload });
       return summary;
     } catch (error) {
