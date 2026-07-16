@@ -293,4 +293,54 @@ describe("WeatherService", () => {
       expect(result.failures).toEqual([]);
     });
   });
+
+  describe("refreshModelMeta", () => {
+    // icon_seamless has no meta of its own — each member model gets a row.
+    const meta = {
+      lastRunAvailabilityTime: new Date("2026-07-16T05:55:00Z"),
+      updateIntervalSec: 10_800,
+    };
+
+    it("upserts one row per member model", async () => {
+      mockClient.fetchModelMeta.mockResolvedValue(meta);
+
+      await service.refreshModelMeta();
+
+      expect(mockClient.fetchModelMeta).toHaveBeenCalledWith("dwd_icon_eu");
+      expect(mockClient.fetchModelMeta).toHaveBeenCalledWith("dwd_icon");
+      expect(mockRepo.upsertModelMeta).toHaveBeenCalledTimes(2);
+      expect(mockRepo.upsertModelMeta).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "dwd_icon_eu",
+          lastRunAvailabilityTime: meta.lastRunAvailabilityTime,
+          updateIntervalSec: meta.updateIntervalSec,
+        }),
+      );
+      expect(mockRepo.upsertModelMeta).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "dwd_icon" }),
+      );
+    });
+
+    it("keeps the healthy member's update when the other fails", async () => {
+      mockClient.fetchModelMeta
+        .mockRejectedValueOnce(new Error("404"))
+        .mockResolvedValueOnce(meta);
+
+      await service.refreshModelMeta();
+
+      expect(mockRepo.upsertModelMeta).toHaveBeenCalledTimes(1);
+      expect(mockRepo.upsertModelMeta).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "dwd_icon" }),
+      );
+    });
+
+    it("throws only when every member model fails (cron alerting)", async () => {
+      mockClient.fetchModelMeta.mockRejectedValue(new Error("down"));
+
+      await expect(service.refreshModelMeta()).rejects.toThrow(
+        "every member model",
+      );
+      expect(mockRepo.upsertModelMeta).not.toHaveBeenCalled();
+    });
+  });
 });

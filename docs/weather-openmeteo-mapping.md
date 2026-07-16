@@ -5,7 +5,7 @@
 ## Endpoint'ler
 - **Forecast:** `GET https://api.open-meteo.com/v1/forecast` — `forecast_days` 0–16, `hourly=`, `daily=`, `current=`, `models=`, `cell_selection=`, birim parametreleri. API key gerekmez (ticari kullanımda `apikey`).
 - **Marine:** `GET https://marine-api.open-meteo.com/v1/marine` — 5 km çözünürlük, dalga + deniz değişkenleri, `forecast_days` 16'ya kadar.
-- **Model metadata:** `GET https://api.open-meteo.com/v1/model-metadata?model=<model>` — model koşu/güncelleme zamanları (aşağıda, meta katmanı).
+- **Model metadata:** `GET https://api.open-meteo.com/data/<model>/static/meta.json` — model koşu/güncelleme zamanları (aşağıda, meta katmanı). ~~`/v1/model-metadata`~~ diye bir endpoint YOK (404 — 2026-07-16'da düzeltildi). Yalnız somut modellerin meta dosyası var; `icon_seamless` gibi kompozitlerin yok → meta, üye modellerden okunur (`FORECAST_MODEL_META_SOURCES`: `dwd_icon_eu` → `dwd_icon`).
 
 ## Global istek parametreleri (hepsinde)
 - `latitude`, `longitude` — spot koordinatı.
@@ -64,7 +64,7 @@ Tek `hourly=` listesi: `wind_speed_10m,wind_gusts_10m,wind_direction_10m,weather
 
 | İhtiyaç | Çözüm | Durum |
 |---|---|---|
-| **updated_at / model koşu zamanı** | `/v1/model-metadata?model=<m>` → `last_run_initialisation_time`, `last_run_availability_time`, `update_interval_seconds` | **✅ ÇÖZÜLDÜ** — "Stale · updated 1h 20m ago" bundan + bizim `fetched_at`'ten türetilir |
+| **updated_at / model koşu zamanı** | `/data/<model>/static/meta.json` → `last_run_initialisation_time`, `last_run_availability_time`, `update_interval_seconds` (üye modeller: `dwd_icon_eu` → `dwd_icon`) | **✅ ÇÖZÜLDÜ** — "Stale · updated 1h 20m ago" bundan + bizim `fetched_at`'ten türetilir |
 | Kaynak/model adı (ICON, GFS…) | `models=` ile seçilen model + model-metadata; "Data sources" ekranında gösterilir | ✅ |
 | Spot shore bearing | **bizim spot DB alanımız** (hava değil) — rüzgâr yönünü side/off-shore'a çevirir | ✅ (schema'da) |
 | **Canlı istasyon gözlemi** (anlık rüzgâr/gust) | Open-Meteo **sağlamıyor** — model tabanlı, gerçek istasyon yok | ⛔ **BOŞLUK** |
@@ -89,8 +89,10 @@ GET /v1/forecast?latitude=40.908&longitude=29.152
 GET /v1/marine?latitude=40.908&longitude=29.152
   &hourly=wave_height,wave_period,wave_direction,sea_surface_temperature,sea_level_height_msl&timezone=UTC&forecast_days=11
 
-# Model metadata (tazelik)
-GET /v1/model-metadata?model=icon_seamless
+# Model metadata (tazelik) — kompozit icon_seamless'ın meta dosyası YOK;
+# üye modeller okunur (EU öncelikli, global fallback)
+GET /data/dwd_icon_eu/static/meta.json
+GET /data/dwd_icon/static/meta.json
 ```
 
 ## Özet: `weather` domaini için sonuç

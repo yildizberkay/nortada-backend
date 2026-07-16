@@ -106,6 +106,12 @@ const FORECAST_CURRENT = [
 // make the "updated Xm ago / model run" story inconsistent). `icon_seamless` is
 // ICON global+EU stitched — solid for the Aegean beachhead. See otonom-kararlar.
 export const FORECAST_MODEL = "icon_seamless";
+// The composite `icon_seamless` has NO meta.json of its own (verified
+// 2026-07-16: /data/icon_seamless/... → 404), so run-freshness metadata comes
+// from its member models, most-relevant first: ICON-EU drives our spots'
+// near-term hours (Europe incl. the Aegean, 3 h cadence); ICON global fills
+// the long tail (6 h cadence).
+export const FORECAST_MODEL_META_SOURCES = ["dwd_icon_eu", "dwd_icon"];
 // Display-ready provenance for client attribution footnotes — lives NEXT TO
 // the pinned model so a model switch can't leave the label behind.
 export const FORECAST_SOURCE_DISPLAY = "Open-Meteo";
@@ -247,9 +253,14 @@ export class OpenMeteoClient implements WeatherProvider {
   }
 
   async fetchModelMeta(model: string): Promise<ModelMeta> {
-    const base = globalConfig.config.openMeteo.forecastUrl;
+    // Per-model static metadata lives at the API ORIGIN (/data/<model>/
+    // static/meta.json), not under /v1 — there is no /v1/model-metadata
+    // endpoint (it 404s; the old path broke every cron run until
+    // 2026-07-16). Only concrete models have a meta file; composites like
+    // `icon_seamless` do not (callers pass FORECAST_MODEL_META_SOURCES).
+    const origin = new URL(globalConfig.config.openMeteo.forecastUrl).origin;
     const data = await getJson(
-      `${base}/model-metadata?model=${encodeURIComponent(model)}`,
+      `${origin}/data/${encodeURIComponent(model)}/static/meta.json`,
     );
     // Times are unix seconds.
     const avail = data.last_run_availability_time;

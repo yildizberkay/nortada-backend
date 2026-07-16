@@ -5,8 +5,8 @@ import { GenericError } from "@/packages/error";
 import { windSide } from "@/packages/geo";
 import { createLogger } from "@/packages/logger";
 import {
-  FORECAST_MODEL,
   FORECAST_MODEL_DISPLAY,
+  FORECAST_MODEL_META_SOURCES,
   FORECAST_SOURCE_DISPLAY,
   type ForecastPayload,
   type MarinePayload,
@@ -241,14 +241,35 @@ export class WeatherService extends BaseUseCase {
     return { hotSpots: spots.length, refreshed, failures };
   }
 
+  /** Refresh run metadata for the pinned model's META SOURCES: the composite
+   * `icon_seamless` has no meta file of its own, so each member model gets
+   * its own row. One member failing must not lose the other's update; the
+   * run still fails (cron alerting) when EVERY member failed. */
   async refreshModelMeta(): Promise<void> {
-    const meta = await this.weatherProvider.fetchModelMeta(FORECAST_MODEL);
-    await this.weatherRepository.upsertModelMeta({
-      model: FORECAST_MODEL,
-      lastRunAvailabilityTime: meta.lastRunAvailabilityTime,
-      updateIntervalSec: meta.updateIntervalSec,
-      fetchedAt: new Date(),
-    });
+    const failures: string[] = [];
+    for (const model of FORECAST_MODEL_META_SOURCES) {
+      try {
+        const meta = await this.weatherProvider.fetchModelMeta(model);
+        await this.weatherRepository.upsertModelMeta({
+          model,
+          lastRunAvailabilityTime: meta.lastRunAvailabilityTime,
+          updateIntervalSec: meta.updateIntervalSec,
+          fetchedAt: new Date(),
+        });
+      } catch (error) {
+        failures.push(model);
+        log.warn("Model meta refresh failed for member model", {
+          model,
+          error: String(error),
+        });
+      }
+    }
+    if (failures.length === FORECAST_MODEL_META_SOURCES.length) {
+      throw new GenericError("EXTERNAL_SERVICE_ERROR", {
+        reason: WeatherReason.MODEL_META_UNAVAILABLE,
+        message: `Model meta refresh failed for every member model (${failures.join(", ")})`,
+      });
+    }
   }
 
   // ── internals ───────────────────────────────────────────────────────────────
@@ -267,17 +288,23 @@ export class WeatherService extends BaseUseCase {
   }
 
   /** The pinned model's run time + update cadence (for the "updated Xm ago /
-   * stale" story). The forecast is pinned to FORECAST_MODEL so this metadata
-   * describes the same model that produced the served payload. */
+   * stale" story). `icon_seamless` has no meta of its own, so this reads the
+   * member models most-relevant first (ICON-EU drives our spots' near-term
+   * hours; ICON global is the fallback). */
   private async modelMeta(): Promise<{
     lastRun: Date | null;
     updateIntervalSec: number | null;
   }> {
-    const meta = await this.weatherRepository.findModelMeta(FORECAST_MODEL);
-    return {
-      lastRun: meta?.lastRunAvailabilityTime ?? null,
-      updateIntervalSec: meta?.updateIntervalSec ?? null,
-    };
+    for (const model of FORECAST_MODEL_META_SOURCES) {
+      const meta = await this.weatherRepository.findModelMeta(model);
+      if (meta) {
+        return {
+          lastRun: meta.lastRunAvailabilityTime ?? null,
+          updateIntervalSec: meta.updateIntervalSec ?? null,
+        };
+      }
+    }
+    return { lastRun: null, updateIntervalSec: null };
   }
 
   private freshness(
