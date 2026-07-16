@@ -76,26 +76,36 @@ const MODEL_CONCURRENCY = 4;
  */
 const CHILD_HOUR_CONCURRENCY = 4;
 
-/** The grids' share of the child machine's memory (medium-1x, 2 GB): the
- * rest is the Node baseline, per-file wasm heaps, and encode buffers. */
-const HOUR_MEMORY_BUDGET_BYTES = 1200 * 1024 * 1024;
-/** Multiplier on measured grid bytes per in-flight hour — covers the RGBA
- * packing buffer, the reader's wasm heap, and GC lag on freed grids. */
-const HOUR_MEMORY_SAFETY = 1.3;
+/** The in-flight hours' share of the child machine's memory (medium-1x,
+ * 2 GB): the rest is the Node baseline and V8 heap. */
+const HOUR_MEMORY_BUDGET_BYTES = 1400 * 1024 * 1024;
+/** Fixed per-in-flight-hour cost the grid measurement can't see: the
+ * reader's fresh 64 MB wasm heap (one per `.om` file) plus RGBA packing /
+ * sharp buffers. */
+const HOUR_FIXED_OVERHEAD_BYTES = 150 * 1024 * 1024;
+/** Multiplier on measured grid bytes per in-flight hour. 2.0 because RSS,
+ * not live bytes, is what the OOM killer sees: V8/malloc return freed grid
+ * pages to the OS lazily, so recent peaks stay resident — the first
+ * calibration (1.3, live-bytes thinking) still OOM-killed `ecmwf_ifs`
+ * (2026-07-16). */
+const HOUR_MEMORY_SAFETY = 2.0;
 
 /**
  * How many hours fit the memory budget, given one hour's MEASURED grid
  * bytes — clamped to [1, cap]. Unmeasured (first hour failed) → the cap,
- * matching the old fixed behavior.
+ * matching the old fixed behavior. With today's constants: regionals
+ * (~100 MB) keep 4, UKMO global (~120 MB) gets 3, `ecmwf_ifs` (~300 MB
+ * with regrid copies) goes SEQUENTIAL — slower beats OOM-killed on the
+ * 2 GB machine.
  */
 export function adaptiveHourConcurrency(
   hourGridBytes: number,
   cap: number,
 ): number {
   if (hourGridBytes <= 0) return cap;
-  const fits = Math.floor(
-    HOUR_MEMORY_BUDGET_BYTES / (hourGridBytes * HOUR_MEMORY_SAFETY),
-  );
+  const perHour =
+    hourGridBytes * HOUR_MEMORY_SAFETY + HOUR_FIXED_OVERHEAD_BYTES;
+  const fits = Math.floor(HOUR_MEMORY_BUDGET_BYTES / perHour);
   return Math.max(1, Math.min(cap, fits));
 }
 

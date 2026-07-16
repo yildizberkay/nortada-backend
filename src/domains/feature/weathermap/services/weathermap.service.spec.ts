@@ -726,12 +726,12 @@ describe("WeatherMapService", () => {
       expect(adaptiveHourConcurrency(100 * MB, 4)).toBe(4);
     });
 
-    it("drops for grid-heavy hours (ECMWF IFS ≈ 300 MiB with regrid copies)", () => {
-      expect(adaptiveHourConcurrency(300 * MB, 4)).toBe(3);
+    it("drops a notch for global rasters (UKMO global ≈ 120 MiB)", () => {
+      expect(adaptiveHourConcurrency(120 * MB, 4)).toBe(3);
     });
 
-    it("drops harder as the hour grows (≈ 450 MiB → 2)", () => {
-      expect(adaptiveHourConcurrency(450 * MB, 4)).toBe(2);
+    it("goes sequential for grid-heavy hours (ECMWF IFS ≈ 300 MiB with regrid copies)", () => {
+      expect(adaptiveHourConcurrency(300 * MB, 4)).toBe(1);
     });
 
     it("never goes below one, however heavy the hour", () => {

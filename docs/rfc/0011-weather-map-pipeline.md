@@ -397,11 +397,16 @@ run advanced since planning, the child renders the newer one) and renders
 every due frame of that one model, with up to **`CHILD_HOUR_CONCURRENCY =
 4`** valid hours in flight — ADAPTIVE per model (2026-07-16): the first hour
 renders alone and its measured grid bytes decide how many of the remaining
-hours fit the memory budget (`adaptiveHourConcurrency`, 1.2 GB grid budget ×
-1.3 safety). An hour's weight varies ~3× across models (regional ~100 MB vs
-`ecmwf_ifs` ~300 MB with its regrid copies) and the fixed 4 OOM-killed
-`ecmwf_ifs` on the 2 GB machine. Consumed layer grids are dropped as soon as
-their layer encodes, trimming the peak further.
+hours fit the memory budget (`adaptiveHourConcurrency`: 1.4 GB budget ÷
+(measured bytes × 2.0 safety + 150 MB fixed per-hour overhead — the reader's
+64 MB wasm heap + encode buffers)). The safety is 2.0 because the OOM killer
+sees RSS, not live bytes: freed grid pages return to the OS lazily, and the
+first calibration (×1.3, live-bytes thinking) still OOM-killed `ecmwf_ifs`.
+An hour's weight varies ~3× across models (regional ~100 MB vs `ecmwf_ifs`
+~300 MB with its regrid copies): regionals keep 4, UKMO global gets 3,
+`ecmwf_ifs` renders sequentially — slower beats OOM-killed on the 2 GB
+machine. Consumed layer grids are dropped as soon as their layer encodes,
+trimming the peak further.
 
 - The queue limit bounds how many models render at once **across machines** —
   every child hits the same Open-Meteo archive host, so it is a rate-limit
