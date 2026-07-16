@@ -42,8 +42,14 @@ describe("encodeWindLayer", () => {
   it("round-trips every byte exactly (data texture, not a picture)", async () => {
     // A deliberately noisy 16×16 field so any lossy path would show.
     const size = 16 * 16;
-    const noisyU = Array.from({ length: size }, (_, i) => Math.sin(i * 1.7) * 30);
-    const noisyV = Array.from({ length: size }, (_, i) => Math.cos(i * 2.3) * 25);
+    const noisyU = Array.from(
+      { length: size },
+      (_, i) => Math.sin(i * 1.7) * 30,
+    );
+    const noisyV = Array.from(
+      { length: size },
+      (_, i) => Math.cos(i * 2.3) * 25,
+    );
     const noisyG = Array.from({ length: size }, (_, i) => (i % 37) + 0.5);
     const encoded = await encodeWindLayer(
       grid(noisyU, 16, 16),
@@ -52,8 +58,12 @@ describe("encodeWindLayer", () => {
     );
     const image = await decode(encoded.image);
     const s = encoded.scales as {
-      uMin: number; uMax: number; vMin: number; vMax: number;
-      gustMin: number; gustMax: number;
+      uMin: number;
+      uMax: number;
+      vMin: number;
+      vMax: number;
+      gustMin: number;
+      gustMax: number;
     };
     const byte = (value: number, min: number, max: number) =>
       Math.round(Math.min(Math.max((value - min) / (max - min), 0), 1) * 255);

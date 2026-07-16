@@ -23,6 +23,7 @@ import {
   type WeatherMapModel,
 } from "../models";
 import type { WeatherMapRepository } from "../repositories/weathermap.repository";
+import { laeaSpecFor, regridLaea } from "./laea-regrid";
 import {
   deriveWindComponents,
   type EncodedLayerImage,
@@ -714,6 +715,7 @@ export class WeatherMapService extends BaseUseCase {
     // the next tick retries it anyway (its frame stays missing/stale → still
     // due).
     const variables = [...new Set(dueLayers.flatMap((l) => layerVariables(l)))];
+    let frameBBox = bbox;
     let grids: Map<string, SpatialGrid>;
     try {
       grids = await this.fetchGridsWithRetry(
@@ -730,6 +732,23 @@ export class WeatherMapService extends BaseUseCase {
         if (isPointList(grid)) {
           grids.set(name, regridOctahedral(grid, REGRID_WIDTH, REGRID_HEIGHT));
         }
+      }
+      // LAEA-projected models (UKMO UKV) arrive as native projected rasters —
+      // resample onto the spec's regular lat/lon target grid, and serve THAT
+      // grid's bbox: the archive's bbox describes the projected domain's
+      // lat/lon envelope, not our target raster. A source-shape mismatch
+      // throws here and fails the hour (never ship a mis-georeferenced frame).
+      const laeaSpec = laeaSpecFor(model.id);
+      if (laeaSpec) {
+        for (const [name, grid] of grids) {
+          grids.set(name, regridLaea(grid, laeaSpec));
+        }
+        frameBBox = {
+          west: laeaSpec.target.west,
+          south: laeaSpec.target.south,
+          east: laeaSpec.target.east,
+          north: laeaSpec.target.north,
+        };
       }
     } catch (error) {
       logger.warn("weather-map valid time failed; skipping this hour", {
@@ -775,10 +794,10 @@ export class WeatherMapService extends BaseUseCase {
         objectKey,
         width: encoded.width,
         height: encoded.height,
-        west: bbox.west,
-        south: bbox.south,
-        east: bbox.east,
-        north: bbox.north,
+        west: frameBBox.west,
+        south: frameBBox.south,
+        east: frameBBox.east,
+        north: frameBBox.north,
         scales: encoded.scales as unknown as JsonValue,
         renderedAt: new Date(),
       });
@@ -913,7 +932,9 @@ export function frameObjectKey(
  * before the WebP switch still point old clients at `.png` proxy paths
  * (the object served comes from the ROW's key either way). */
 export function parseFrameFile(file: string): Date | null {
-  const match = file.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})Z\.(?:webp|png)$/);
+  const match = file.match(
+    /^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})Z\.(?:webp|png)$/,
+  );
   if (!match) return null;
   const date = new Date(`${match[1]}T${match[2]}:${match[3]}:00Z`);
   return Number.isNaN(date.getTime()) ? null : date;

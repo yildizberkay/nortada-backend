@@ -337,6 +337,55 @@ describe("WeatherMapService", () => {
       expect(scales.hasRealGust).toBe(false); // no gust field either
     });
 
+    // 20 s budget: builds the real 1.4M-cell LAEA index map and encodes a
+    // real 1626×872 WebP — borderline against jest's 5 s default.
+    it("reprojects LAEA models and stamps frames with the target grid + bbox", async () => {
+      // UKV's native 1042×970 LAEA raster (uniform values — geometry is
+      // unit-tested in laea-regrid.spec.ts; here we assert the wiring).
+      const laea = (value: number): SpatialGrid => ({
+        width: 1042,
+        height: 970,
+        data: new Float32Array(1042 * 970).fill(value),
+      });
+      mockSource.fetchLatest.mockResolvedValue(latest({ validTimes: [NOON] }));
+      mockSource.fetchGrids.mockResolvedValue(
+        new Map([
+          ["wind_speed_10m", laea(10)],
+          ["wind_direction_10m", laea(90)],
+        ]),
+      );
+
+      const summary = await service.refresh(NOW, {
+        models: ["ukmo_uk_deterministic_2km"],
+        layers: ["wind"],
+      });
+
+      expect(summary.rendered).toBe(1);
+      const upsert = mockRepo.upsertFrame.mock.calls[0][0];
+      expect(upsert.width).toBe(1626);
+      expect(upsert.height).toBe(872);
+      // The frame bbox is OUR target raster's, not the archive envelope's.
+      expect(upsert.west).toBeCloseTo(-17.16, 6);
+      expect(upsert.south).toBeCloseTo(44.5, 6);
+      expect(upsert.east).toBeCloseTo(15.36, 6);
+      expect(upsert.north).toBeCloseTo(61.94, 6);
+    }, 20_000);
+
+    it("fails the hour when a LAEA source grid shape changes upstream", async () => {
+      mockSource.fetchLatest.mockResolvedValue(latest({ validTimes: [NOON] }));
+      // 2×2 grids ≠ the spec's 1042×970 — must not ship mis-georeferenced.
+      mockSource.fetchGrids.mockResolvedValue(allGrids());
+
+      const summary = await service.refresh(NOW, {
+        models: ["ukmo_uk_deterministic_2km"],
+        layers: ["wind"],
+      });
+
+      expect(summary.rendered).toBe(0);
+      expect(summary.frameErrors).toBe(1);
+      expect(mockRepo.upsertFrame).not.toHaveBeenCalled();
+    });
+
     it("retries a failed hour once and renders it on the second attempt", async () => {
       mockSource.fetchLatest.mockResolvedValue(latest({ validTimes: [NOON] }));
       mockSource.fetchGrids
@@ -375,9 +424,9 @@ describe("WeatherMapService", () => {
       expect(keys.every((k) => String(k).includes("1300Z"))).toBe(true);
     });
 
-    it("override narrowing cannot resurrect a disabled model", async () => {
+    it("override narrowing cannot select a model outside the enabled registry", async () => {
       const summary = await service.refresh(NOW, {
-        models: ["ukmo_uk_deterministic_2km"],
+        models: ["ncep_gfs025"], // removed from the registry — never renders
       });
       expect(summary.checked).toBe(0);
       expect(mockSource.fetchLatest).not.toHaveBeenCalled();
@@ -551,12 +600,12 @@ describe("WeatherMapService", () => {
       expect(mockSource.fetchGrids).not.toHaveBeenCalled();
     });
 
-    it("rejects unknown and disabled models (no isolation here — the task retries)", async () => {
+    it("rejects models outside the enabled registry (no isolation here — the task retries)", async () => {
       await expect(service.refreshModelById("nope", NOW)).rejects.toThrow(
         GenericError,
       );
       await expect(
-        service.refreshModelById("ukmo_uk_deterministic_2km", NOW),
+        service.refreshModelById("ncep_gfs025", NOW),
       ).rejects.toThrow(GenericError);
       expect(mockSource.fetchLatest).not.toHaveBeenCalled();
     });
@@ -576,8 +625,8 @@ describe("WeatherMapService", () => {
       // The full enabled registry — disabled entries stay out.
       const ids = catalog.models.map((m) => m.model);
       expect(ids).toContain("dwd_icon_d2");
-      expect(ids).not.toContain("ukmo_uk_deterministic_2km");
-      expect(ids).not.toContain("ncep_gfs025");
+      expect(ids).toContain("ukmo_global_deterministic_10km");
+      expect(ids).toContain("ukmo_uk_deterministic_2km");
       expect(catalog.layers).toEqual([
         { layer: "wind", label: "Wind", unit: "m/s" },
         { layer: "temperature", label: "Temperature", unit: "°C" },
@@ -666,9 +715,9 @@ describe("WeatherMapService", () => {
     });
 
     it("rejects unknown or inactive models and layers", async () => {
-      await expect(
-        service.getManifest("ukmo_uk_deterministic_2km", "wind"),
-      ).rejects.toThrow(GenericError);
+      await expect(service.getManifest("ncep_gfs025", "wind")).rejects.toThrow(
+        GenericError,
+      );
       await expect(service.getManifest("nope", "wind")).rejects.toThrow(
         GenericError,
       );

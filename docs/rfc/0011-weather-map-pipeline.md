@@ -88,11 +88,14 @@ Two design choices carry the RFC:
   - **ICON-D2 15 min** — the 15-minutely variant is not published on
     `data_spatial` (404); it exists only in the time-series API. Revisit if
     Open-Meteo adds it.
-  - **UKMO UKV 2 km** — published on a Lambert-Azimuthal projected grid, not
-    lat/lon; needs a reprojection pass that no other model needs. Registered
-    but `enabled: false` until a reprojection step lands.
-  - **BOM ACCESS-G** — feed verified stale (data end 2025-06-30); not
-    registered.
+  - ~~**UKMO UKV 2 km**~~ — WAS out (Lambert-Azimuthal projected grid);
+    brought in 2026-07-16 (UK/sailing market): `laea-regrid.ts` resamples the
+    native LAEA raster onto a regular 0.02° grid before the shared encode
+    path (§7), validated r=0.9989 / RMSE 0.23 °C against Open-Meteo's own
+    point API on the same file.
+  - **BOM ACCESS-G** — was stale (data end 2025-06-30), now absent from
+    `data_spatial` entirely (latest.json 404, re-verified 2026-07-16); not
+    registered. Wanted for the Australia market when Open-Meteo publishes it.
   - Multi-variable non-wind packings (e.g. wave height + direction) — the
     encoder dispatch supports adding a new `kind`, but no such layer ships
     in this RFC.
@@ -318,7 +321,6 @@ user-chosen set (2026-07-15) plus verified recommendations:
 | `jma_gsm` | JMA GSM 0.5° | ✅ |
 | `jma_msm` | JMA MSM 0.05° | ✅ |
 | `ncep_gfs013` | NOAA GFS 0.13° | ✅ |
-| `ncep_gfs025` | NOAA GFS 0.25° | ❌ — pressure-level fields only in data_spatial (no 10 m wind / 2 m temp); GFS 0.13° covers the family. |
 | `meteofrance_arpege_world025` | ARPEGE World 0.25° | ✅ |
 | `meteofrance_arpege_europe` | ARPEGE Europe 0.1° | ✅ |
 | `meteofrance_arome_france_hd` | AROME France HD 0.01° | ✅ |
@@ -328,7 +330,20 @@ user-chosen set (2026-07-15) plus verified recommendations:
 | `metno_nordic_pp` | MET Norway Nordic 1 km | ✅ |
 | `meteoswiss_icon_ch1` | MeteoSwiss ICON-CH1 1 km | ✅ |
 | `meteoswiss_icon_ch2` | MeteoSwiss ICON-CH2 2 km | ✅ |
-| `ukmo_uk_deterministic_2km` | UKMO UKV 2 km | ❌ projected grid (§3) |
+| `ukmo_global_deterministic_10km` | UKMO Global 10 km | ✅ — added 2026-07-16 (UK/sailing market). Regular lat/lon 2560×1920; wind ships as speed+direction, covered by the derive-u/v encode path. |
+| `ukmo_uk_deterministic_2km` | UKMO UKV 2 km | ✅ — enabled 2026-07-16 (UK/sailing market). NATIVE Lambert-Azimuthal projected raster (zero NaN fringe, r=0.61 vs UKMO global under an equirect assumption); `laea-regrid.ts` resamples onto a regular 0.02° grid (1626×872), frames carry the TARGET raster's bbox. Validated vs the point API: r=0.9989, RMSE 0.23 °C. |
+
+Evaluated and rejected (removed from the registry 2026-07-16, kept here so
+nobody re-discovers it): `ncep_gfs025` (GFS 0.25°) — its data_spatial files
+carry pressure-level fields only (no 10 m wind / 2 m temp, verified
+2026-07-15); GFS 0.13° covers the family. Only relevant again if an upper-air
+layer ships.
+
+Wanted but not publishable: `bom_access_global` (BOM ACCESS-G, the Australia
+market) is in Open-Meteo's point-forecast API but NOT in the data_spatial
+archive (all id variants 404, verified 2026-07-16) — nothing to render until
+Open-Meteo publishes it. Australia is meanwhile covered by the global tier
+(GFS 0.13°, IFS HRES, ICON, UKMO Global, ARPEGE World).
 
 Narrowing is per-invocation only (force-run payload / CLI `--models`) — dev
 renders 1–2 models via the CLI instead of env config. The pipeline's tunables
@@ -368,7 +383,10 @@ without failing the tick.
 
 ### `weathermap-render-model` (fan-out child)
 
-`schemaTask`, payload `{ model }`, `machine: "small-2x"`, `maxDuration` 3600,
+`schemaTask`, payload `{ model }`, `machine: "medium-1x"` (bumped from
+small-2x after a prod OOM kill 2026-07-16 — global models hold ~120 MB of
+grids per in-flight hour × 2 concurrent hours plus encode buffers),
+`maxDuration` 3600,
 `retry.maxAttempts: 3`, `queue.concurrencyLimit: 6`. Calls
 `weatherMapService.refreshModelById(model)`: re-reads `latest.json` (if the
 run advanced since planning, the child renders the newer one) and renders
@@ -515,8 +533,8 @@ forward.
   the full horizons exceeds one task window — the per-frame upsert makes
   successive ticks resume where the previous one stopped, and steady state
   only re-renders runs that advanced.
-- The largest encode (GFS 0.13°, 2879×1441) is ~16 MB RGBA in memory — fine
-  for the worker.
+- The largest encode (UKMO Global 10 km, 2560×1920) is ~20 MB RGBA in memory
+  (GFS 0.13°, 2879×1441, is ~16 MB) — fine for the worker.
 
 ## 13. Testing Strategy
 
@@ -551,7 +569,7 @@ forward.
   bits)** — rejected: layers update/ship independently, clients fetch only
   what they show, and the wind PNG must stay byte-compatible with the iOS POC.
 - **Store PNGs in Postgres** — rejected: RFC-0006 already established R2 for
-  binary blobs; frames are up to ~3 MB each.
+  binary blobs; frames are up to ~3.7 MB each.
 - **Render on demand (lazy, per request)** — rejected: first-viewer pays a
   multi-second render; the map needs the full frame strip for animation; and
   demand-driven rendering can't pre-warm the "next hour" before it arrives.
@@ -607,8 +625,8 @@ forward.
   narrowing (force-run payload / CLI flags) covers dev needs. Only genuinely
   deployment-specific config (`OBJECT_STORAGE_PUBLIC_BASE_URL`) lives in env.
 - **Resolved — one PNG per (model, layer), whole domain** (no tiling):
-  matches the client's single-texture renderer; the largest frame (~3 MB) is
-  acceptable over the wire. Revisit with tiles only if we add global
+  matches the client's single-texture renderer; the largest frame (~3.7 MB,
+  UKMO Global wind, measured live 2026-07-16) is acceptable over the wire. Revisit with tiles only if we add global
   pan-anywhere UX at high zoom.
 - **Resolved — scalar precision:** 8-bit per channel with per-frame min/max
   is enough for map visualization (temperature resolves to ~0.2 °C over a
@@ -619,7 +637,8 @@ forward.
   `prune`) instead of one monolithic render run. Idempotency: global-scoped
   `(model, referenceTime)` key with 1 h TTL — dedupes while a child works a
   run, re-fans an incomplete render afterwards. Child knobs are design
-  constants like everything else: `machine small-2x`, `maxDuration 3600`,
+  constants like everything else: `machine medium-1x` (small-2x OOM-killed
+  in prod 2026-07-16), `maxDuration 3600`,
   `queue.concurrencyLimit 6` (archive-host rate bound),
   `CHILD_HOUR_CONCURRENCY 2`.
 - **Open — perpetually-due missing variables:** a layer whose variable a

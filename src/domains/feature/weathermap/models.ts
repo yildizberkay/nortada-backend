@@ -3,6 +3,13 @@
 // user-selected major-model set plus verified recommendations. `enabled` is
 // the default; per-invocation narrowing (force-run payload / CLI --models)
 // can only select among enabled entries, never resurrect a disabled one.
+//
+// Evaluated and rejected (not registry entries — do not re-add without
+// re-verifying):
+// - `ncep_gfs025` (GFS 0.25°): data_spatial files carry pressure-level fields
+//   only — no 10 m wind, no 2 m temperature (verified 2026-07-15). GFS 0.13°
+//   covers the family with surface fields at higher resolution. The 0.25°
+//   files become relevant only if we ever ship an upper-air layer.
 
 export interface WeatherMapModel {
   /** `data_spatial` model id — also the public id in the API + object keys. */
@@ -88,16 +95,6 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     resolutionKm: 13,
     enabled: true,
   },
-  // The data_spatial files for GFS 0.25° carry pressure-level fields only —
-  // no 10 m wind and no 2 m temperature (verified 2026-07-15). GFS 0.13°
-  // covers the same model family with surface fields at higher resolution.
-  {
-    id: "ncep_gfs025",
-    label: "GFS 0.25°",
-    provider: "NOAA NCEP",
-    resolutionKm: 25,
-    enabled: false,
-  },
   {
     id: "meteofrance_arpege_world025",
     label: "ARPEGE World",
@@ -161,14 +158,26 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     resolutionKm: 2,
     enabled: true,
   },
-  // Published on a Lambert-Azimuthal projected grid, not lat/lon — needs a
-  // reprojection pass before it can share the encode path (RFC-0011 §3).
+  // Regular lat/lon global grid (2560×1920, 0.141°×0.094°, verified live
+  // 2026-07-16); publishes 10 m wind as speed+direction — the encoder's
+  // derive-u/v path (KNMI/DMI pattern) covers it.
+  {
+    id: "ukmo_global_deterministic_10km",
+    label: "UKMO Global 10 km",
+    provider: "UK Met Office",
+    resolutionKm: 10,
+    enabled: true,
+  },
+  // Published as a NATIVE Lambert-Azimuthal projected raster, not lat/lon
+  // (verified live 2026-07-16: zero NaN fringe + r=0.61 vs UKMO global under
+  // an equirect assumption) — `laea-regrid.ts` resamples it onto a regular
+  // 0.02° lat/lon grid before the shared encode path (RFC-0011 §3/§7).
   {
     id: "ukmo_uk_deterministic_2km",
     label: "UKV",
     provider: "UK Met Office",
     resolutionKm: 2,
-    enabled: false,
+    enabled: true,
   },
 ];
 
