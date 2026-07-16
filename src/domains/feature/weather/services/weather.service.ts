@@ -42,6 +42,26 @@ interface Fetched<T> {
   stale: boolean;
 }
 
+/** One swallowed hot-set failure — `providerStatus` is the upstream HTTP status
+ * (404, 429…) when the failure was a provider non-OK, else null. */
+export interface HotSetRefreshFailure {
+  spotUid: string;
+  providerStatus: number | null;
+  error: string;
+}
+
+export interface HotSetRefreshReport {
+  hotSpots: number;
+  refreshed: number;
+  failures: HotSetRefreshFailure[];
+}
+
+const providerStatusOf = (error: unknown): number | null => {
+  const status =
+    error instanceof GenericError ? error.options?.data?.status : undefined;
+  return typeof status === "number" ? status : null;
+};
+
 /** One row of the daily strip — a spot-LOCAL calendar day rolled up from the
  * hourly series, sized for the client's 10-day outlook UI. */
 interface ForecastDay {
@@ -196,23 +216,29 @@ export class WeatherService extends BaseUseCase {
   }
 
   /** Re-fetch the whole hot set (favorites). Called by the weather-refresh cron
-   * (D-004) — one spot's failure never aborts the batch. */
-  async refreshHotSet(): Promise<{ hotSpots: number; refreshed: number }> {
+   * (D-004) — one spot's failure never aborts the batch; failures come back in
+   * the report so the run output shows exactly what broke (and with what
+   * provider status, e.g. 404). */
+  async refreshHotSet(): Promise<HotSetRefreshReport> {
     const spots = await this.spotPort.listHotSpotGeos();
     let refreshed = 0;
+    const failures: HotSetRefreshFailure[] = [];
     for (const spot of spots) {
       try {
         await this.fetchAndCacheForecast(spot);
         await this.fetchAndCacheMarine(spot);
         refreshed++;
       } catch (error) {
-        log.warn("Hot-set refresh failed for spot", {
+        const failure: HotSetRefreshFailure = {
           spotUid: spot.uid,
+          providerStatus: providerStatusOf(error),
           error: String(error),
-        });
+        };
+        failures.push(failure);
+        log.warn("Hot-set refresh failed for spot", { ...failure });
       }
     }
-    return { hotSpots: spots.length, refreshed };
+    return { hotSpots: spots.length, refreshed, failures };
   }
 
   async refreshModelMeta(): Promise<void> {

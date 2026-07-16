@@ -1,5 +1,6 @@
 import type { WeatherCache } from "@/db";
 import type { SpotGeo } from "@/domains/feature/spot/types";
+import { GenericError } from "@/packages/error";
 import type {
   ForecastPayload,
   MarinePayload,
@@ -255,6 +256,41 @@ describe("WeatherService", () => {
 
       expect(result.hotSpots).toBe(2);
       expect(result.refreshed).toBe(1);
+      expect(result.failures).toEqual([
+        { spotUid: "spot-2", providerStatus: null, error: "Error: fail" },
+      ]);
+    });
+
+    it("reports the provider HTTP status for non-OK failures", async () => {
+      mockSpotService.listHotSpotGeos.mockResolvedValue([geo]);
+      mockRepo.findCache.mockResolvedValue(undefined as never);
+      mockClient.fetchForecast.mockRejectedValueOnce(
+        new GenericError("EXTERNAL_SERVICE_ERROR", {
+          message: "Weather provider returned 404",
+          data: { status: 404, url: "https://api.open-meteo.com/v1/forecast" },
+        }),
+      );
+
+      const result = await service.refreshHotSet();
+
+      expect(result.refreshed).toBe(0);
+      expect(result.failures).toEqual([
+        {
+          spotUid: "spot-1",
+          providerStatus: 404,
+          error: expect.stringContaining("404"),
+        },
+      ]);
+    });
+
+    it("returns an empty failure report when every spot refreshes", async () => {
+      mockSpotService.listHotSpotGeos.mockResolvedValue([geo]);
+      mockRepo.findCache.mockResolvedValue(undefined as never);
+
+      const result = await service.refreshHotSet();
+
+      expect(result.refreshed).toBe(1);
+      expect(result.failures).toEqual([]);
     });
   });
 });

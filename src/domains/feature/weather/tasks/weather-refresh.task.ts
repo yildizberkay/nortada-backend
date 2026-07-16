@@ -25,7 +25,15 @@ export const weatherRefreshTask = schedules.task({
     try {
       const services = buildContainer(dbManager);
       const result = await services.weatherService.refreshHotSet();
-      logger.info("Weather hot-set refreshed", result);
+      // End-of-run report: swallowed failures (provider 404s etc.) surface here
+      // instead of dying as per-spot warns inside the batch.
+      if (result.failures.length > 0) {
+        logger.error("Weather hot-set refresh report: failures", {
+          failed: result.failures.length,
+          failures: result.failures,
+        });
+      }
+      logger.info("Weather hot-set refreshed", { ...result });
       return result;
     } catch (error) {
       Tracking.captureException(error, undefined, {

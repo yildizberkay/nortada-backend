@@ -152,9 +152,10 @@ async function getJson(url: string): Promise<Json> {
     });
   }
   if (!response.ok) {
-    logger.error("Open-Meteo non-OK", { status: response.status });
+    logger.error("Open-Meteo non-OK", { status: response.status, url });
     throw new GenericError("EXTERNAL_SERVICE_ERROR", {
       message: `Weather provider returned ${response.status}`,
+      data: { status: response.status, url },
     });
   }
   return response.json();
