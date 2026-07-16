@@ -101,6 +101,14 @@ describe("encodeWindLayer", () => {
       /shapes differ/,
     );
   });
+
+  it("rejects a flattened point list (1-row reduced-Gaussian grid)", () => {
+    // ECMWF IFS HRES ships [1 × N] — a point list, not a raster.
+    const strip = grid([1, 2, 3, 4], 4, 1);
+    expect(() => encodeWindLayer(strip, strip, null)).toThrow(
+      /not a 2D raster/,
+    );
+  });
 });
 
 describe("deriveWindComponents", () => {
@@ -173,6 +181,12 @@ describe("encodeScalarLayer", () => {
     const image = decode(encoded.png);
     // NaN → value 0 → clamped below min → byte 0 (texture row 1 col 0).
     expect(image.data[8]).toBe(0);
+  });
+
+  it("rejects a flattened point list (1-row reduced-Gaussian grid)", () => {
+    expect(() => encodeScalarLayer(grid([1, 2, 3, 4], 4, 1))).toThrow(
+      /not a 2D raster/,
+    );
   });
 
   it("rejects a grid whose array doesn't match its dimensions", () => {

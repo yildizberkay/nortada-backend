@@ -36,6 +36,9 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     resolutionKm: 2.2,
     enabled: true,
   },
+  // Published as the native O1280 reduced-Gaussian POINT LIST (the .om grid
+  // is [1 × 6,599,680]), not a lat/lon raster — resampled onto a regular
+  // 0.1° grid by `reduced-gaussian.ts` before encoding (RFC-0011 §7).
   {
     id: "ecmwf_ifs",
     label: "IFS HRES",

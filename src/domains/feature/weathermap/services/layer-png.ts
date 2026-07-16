@@ -92,6 +92,7 @@ export function encodeWindLayer(
       `wind grid shapes differ: u=${width}×${height} v=${v.width}×${v.height}`,
     );
   }
+  assertRaster("wind", u);
   const size = width * height;
   assertSize("u", u, size);
   assertSize("v", v, size);
@@ -159,6 +160,7 @@ export function encodeWindLayer(
 /** Encode a single-variable layer (temperature, precipitation, …) into R. */
 export function encodeScalarLayer(grid: SpatialGrid): EncodedLayerPng {
   const { width, height } = grid;
+  assertRaster("scalar", grid);
   const size = width * height;
   assertSize("scalar", grid, size);
 
@@ -198,6 +200,20 @@ export function encodeScalarLayer(grid: SpatialGrid): EncodedLayerPng {
   }
 
   return { png: PNG.sync.write(png), width, height, scales };
+}
+
+/**
+ * A 1-row/1-column "grid" is a flattened point list, not a raster — e.g.
+ * ECMWF IFS HRES ships its O1280 reduced-Gaussian sphere as [1 × 6,599,680].
+ * Encoding one verbatim would upload a PNG no decoder can open, so it must
+ * fail the model loudly instead (regridding is the real fix — RFC-0011 §7).
+ */
+function assertRaster(name: string, grid: SpatialGrid): void {
+  if (grid.width < 2 || grid.height < 2) {
+    throw new Error(
+      `${name} grid ${grid.width}×${grid.height} is not a 2D raster — reduced/spectral grids need regridding before encode`,
+    );
+  }
 }
 
 function assertSize(name: string, grid: SpatialGrid, size: number): void {

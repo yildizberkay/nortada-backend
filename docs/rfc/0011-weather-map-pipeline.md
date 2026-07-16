@@ -311,14 +311,14 @@ user-chosen set (2026-07-15) plus verified recommendations:
 | `dwd_icon` | DWD ICON 11 km global | ✅ |
 | `dwd_icon_eu` | DWD ICON-EU 6.5 km | ✅ |
 | `dwd_icon_d2` | DWD ICON-D2 2.2 km | ✅ |
-| `ecmwf_ifs` | ECMWF IFS HRES 9 km | ✅ |
+| `ecmwf_ifs` | ECMWF IFS HRES 9 km | ✅ — ships the native O1280 reduced-Gaussian POINT LIST (`[1 × 6,599,680]`), not a lat/lon raster (encoding it verbatim produced unopenable 6.6M×1 PNGs, found in prod 2026-07-16). `reduced-gaussian.ts` resamples it onto a regular 0.1° grid (3600×1800, nearest-neighbor; layout verified r=0.9999 against the same run's `ecmwf_ifs025`) before the shared encode path. |
 | `ecmwf_ifs025` | ECMWF IFS 0.25° | ✅ |
 | `geosphere_arome_austria` | GeoSphere AROME 1 km | ✅ |
 | `italia_meteo_arpae_icon_2i` | ItaliaMeteo ICON-2I 2.2 km | ✅ |
 | `jma_gsm` | JMA GSM 0.5° | ✅ |
 | `jma_msm` | JMA MSM 0.05° | ✅ |
 | `ncep_gfs013` | NOAA GFS 0.13° | ✅ |
-| `ncep_gfs025` | NOAA GFS 0.25° | ✅ |
+| `ncep_gfs025` | NOAA GFS 0.25° | ❌ — pressure-level fields only in data_spatial (no 10 m wind / 2 m temp); GFS 0.13° covers the family. |
 | `meteofrance_arpege_world025` | ARPEGE World 0.25° | ✅ |
 | `meteofrance_arpege_europe` | ARPEGE Europe 0.1° | ✅ |
 | `meteofrance_arome_france_hd` | AROME France HD 0.01° | ✅ |
@@ -404,7 +404,9 @@ enabled registry.
 - **`weathermap-render-now`** (`schemaTask`, payload
   `{ models?, layers?, horizonHours? }`, `{}` = one full cron-equivalent
   pass): trigger from the Trigger.dev dashboard or `tasks.trigger` when the
-  worker is deployed/running.
+  worker is deployed/running. `machine: "medium-1x"` — the in-process pass
+  holds up to `MODEL_CONCURRENCY` (4) models' grids at once (~100 MB each),
+  which overruns the 0.5 GB default machine.
 - **`npm run weathermap:render`** (`tools/weathermap-render.ts`) — terminal
   force-run with no Trigger dependency:
   `npm run weathermap:render -- --models=dwd_icon_eu --layers=wind,temperature --horizon=3`.

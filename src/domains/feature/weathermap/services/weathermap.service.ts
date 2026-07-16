@@ -29,6 +29,7 @@ import {
   encodeScalarLayer,
   encodeWindLayer,
 } from "./layer-png";
+import { isPointList, regridOctahedral } from "./reduced-gaussian";
 
 const logger = createLogger("weathermap");
 
@@ -42,6 +43,15 @@ const MANIFEST_LOOKBACK_MS = 60 * 60 * 1000;
 // `WeatherMapRefreshOverrides.horizonHours`. Past frames are pruned after 1 h
 // — exactly when they drop out of the manifest.
 const RETENTION_HOURS = 1;
+
+/**
+ * Target raster for reduced-Gaussian models (ECMWF IFS HRES native ~9 km ≈
+ * 0.08°): 0.1° global — 3600×1800 keeps a real edge over the 0.25°
+ * `ecmwf_ifs025` while staying in the same texture-size family as the
+ * regular-grid globals (ICON global is 0.125°).
+ */
+const REGRID_WIDTH = 3600;
+const REGRID_HEIGHT = 1800;
 
 /**
  * Models handled concurrently by the IN-PROCESS paths — the orchestrator's
@@ -705,6 +715,15 @@ export class WeatherMapService extends BaseUseCase {
         validTime,
         variables,
       );
+      // Reduced-Gaussian models (ECMWF IFS HRES) arrive as a flattened point
+      // list, not a raster — resample onto the regular target grid before
+      // the encoders see them. A non-octahedral point list throws here and
+      // fails the whole hour (never ship an unopenable PNG).
+      for (const [name, grid] of grids) {
+        if (isPointList(grid)) {
+          grids.set(name, regridOctahedral(grid, REGRID_WIDTH, REGRID_HEIGHT));
+        }
+      }
     } catch (error) {
       logger.warn("weather-map valid time failed; skipping this hour", {
         model: model.id,
