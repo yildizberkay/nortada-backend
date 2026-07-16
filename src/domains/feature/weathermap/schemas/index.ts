@@ -12,12 +12,14 @@ export const weatherMapQuerySchema = z.object({
 export type WeatherMapQuery = z.infer<typeof weatherMapQuerySchema>;
 
 // The proxy route's file segment is exactly what the manifest emitted:
-// a compact valid time + .png. Strict shape (plus the DB existence check)
-// keeps the route from reading arbitrary keys out of the shared bucket.
+// a compact valid time + extension. Strict shape (plus the DB existence
+// check) keeps the route from reading arbitrary keys out of the shared
+// bucket. `.png` stays accepted for the container transition — manifests
+// issued before the WebP switch still point at `.png` paths.
 export const weatherMapFrameParamSchema = z.object({
   model: z.string().min(1),
   layer: z.string().min(1),
-  file: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{4}Z\.png$/),
+  file: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{4}Z\.(?:webp|png)$/),
 });
 export type WeatherMapFrameParam = z.infer<typeof weatherMapFrameParamSchema>;
 

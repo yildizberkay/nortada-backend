@@ -1,9 +1,11 @@
-import { PNG } from "pngjs";
-
 import type { SpatialGrid } from "@/packages/om-spatial";
 
-// PNG packing for weather-map layers (RFC-0011 §7). Shared rules for every
-// layer kind:
+// Texture packing for weather-map layers (RFC-0011 §7), containered as
+// LOSSLESS WebP (VP8L). The container changed from PNG (2026-07-16) because
+// pngjs choked on the high-resolution regional models — libvips WebP encodes
+// faster AND ~25-40% smaller, and lossless mode keeps the bytes EXACT (these
+// are data textures, not pictures; a single off-by-one byte corrupts wind).
+// Shared rules for every layer kind:
 //   channel byte = round((value - min) / (max - min) * 255)
 //   A = 255 always (alpha is NEVER data — premultiplied decoders must not be
 //   able to corrupt the channels), row 0 = NORTH edge (the `.om` grids are
@@ -21,6 +23,16 @@ import type { SpatialGrid } from "@/packages/om-spatial";
 
 /** Gust ≈ speed × 1.35 when the file has no gust field (T+0 analysis). */
 const GUST_FALLBACK_FACTOR = 1.35;
+
+/** WebP's hard container limit: 16383 px per side (14-bit dimensions).
+ * Today's largest grid is the 3600×1800 reduced-Gaussian regrid — far under
+ * it — but a future ultra-high-res model must fail LOUDLY here, not upload
+ * a frame no decoder can open. */
+const WEBP_MAX_DIMENSION = 16383;
+
+/** Lossless effort 0–6: higher = smaller + slower. 4 (default) keeps the
+ * 6.5M-px regrid encode in single-digit seconds inside the Trigger task. */
+const WEBP_EFFORT = 4;
 
 export interface WindScales {
   uMin: number;
@@ -40,11 +52,31 @@ export interface ScalarScales {
 
 export type LayerScales = WindScales | ScalarScales;
 
-export interface EncodedLayerPng {
-  png: Buffer;
+export interface EncodedLayerImage {
+  /** Lossless WebP bytes (`image/webp`). */
+  image: Buffer;
   width: number;
   height: number;
   scales: LayerScales;
+}
+
+/** Raw RGBA → lossless WebP. Split out so the packing loops stay sync and
+ * the specs can round-trip the exact bytes.
+ *
+ * sharp is loaded DYNAMICALLY, never as a top-level import: this module is
+ * in the weathermap Trigger tasks' static graph, and a static native-module
+ * import is what blows up Trigger's esbuild bundling (the brandscale-backend
+ * lesson — native code stays out of the static graph, `build.external` lists
+ * "sharp" so the deploy image installs the real linux binaries). */
+async function toLosslessWebP(
+  raw: Buffer,
+  width: number,
+  height: number,
+): Promise<Buffer> {
+  const { default: sharp } = await import("sharp");
+  return sharp(raw, { raw: { width, height, channels: 4 } })
+    .webp({ lossless: true, effort: WEBP_EFFORT })
+    .toBuffer();
 }
 
 /**
@@ -81,11 +113,11 @@ export function deriveWindComponents(
 }
 
 /** Encode the wind layer (u + v required, gust optional) — R/G/B packing. */
-export function encodeWindLayer(
+export async function encodeWindLayer(
   u: SpatialGrid,
   v: SpatialGrid,
   gust: SpatialGrid | null,
-): EncodedLayerPng {
+): Promise<EncodedLayerImage> {
   const { width, height } = u;
   if (v.width !== width || v.height !== height) {
     throw new Error(
@@ -133,8 +165,7 @@ export function encodeWindLayer(
     hasRealGust,
   };
 
-  const png = new PNG({ width, height });
-  const out = png.data;
+  const out = Buffer.allocUnsafe(size * 4);
   for (let row = 0; row < height; row++) {
     // Source row 0 = south; texture row 0 = north.
     const srcRow = height - 1 - row;
@@ -154,11 +185,18 @@ export function encodeWindLayer(
     }
   }
 
-  return { png: PNG.sync.write(png), width, height, scales };
+  return {
+    image: await toLosslessWebP(out, width, height),
+    width,
+    height,
+    scales,
+  };
 }
 
 /** Encode a single-variable layer (temperature, precipitation, …) into R. */
-export function encodeScalarLayer(grid: SpatialGrid): EncodedLayerPng {
+export async function encodeScalarLayer(
+  grid: SpatialGrid,
+): Promise<EncodedLayerImage> {
   const { width, height } = grid;
   assertRaster("scalar", grid);
   const size = width * height;
@@ -183,8 +221,7 @@ export function encodeScalarLayer(grid: SpatialGrid): EncodedLayerPng {
 
   const scales: ScalarScales = { min, max };
 
-  const png = new PNG({ width, height });
-  const out = png.data;
+  const out = Buffer.allocUnsafe(size * 4);
   for (let row = 0; row < height; row++) {
     const srcRow = height - 1 - row;
     for (let col = 0; col < width; col++) {
@@ -199,19 +236,30 @@ export function encodeScalarLayer(grid: SpatialGrid): EncodedLayerPng {
     }
   }
 
-  return { png: PNG.sync.write(png), width, height, scales };
+  return {
+    image: await toLosslessWebP(out, width, height),
+    width,
+    height,
+    scales,
+  };
 }
 
 /**
  * A 1-row/1-column "grid" is a flattened point list, not a raster — e.g.
  * ECMWF IFS HRES ships its O1280 reduced-Gaussian sphere as [1 × 6,599,680].
- * Encoding one verbatim would upload a PNG no decoder can open, so it must
- * fail the model loudly instead (regridding is the real fix — RFC-0011 §7).
+ * Encoding one verbatim would upload a texture no decoder can open, so it
+ * must fail the model loudly instead (regridding is the real fix — RFC-0011
+ * §7). The upper bound is WebP's own container limit.
  */
 function assertRaster(name: string, grid: SpatialGrid): void {
   if (grid.width < 2 || grid.height < 2) {
     throw new Error(
       `${name} grid ${grid.width}×${grid.height} is not a 2D raster — reduced/spectral grids need regridding before encode`,
+    );
+  }
+  if (grid.width > WEBP_MAX_DIMENSION || grid.height > WEBP_MAX_DIMENSION) {
+    throw new Error(
+      `${name} grid ${grid.width}×${grid.height} exceeds WebP's ${WEBP_MAX_DIMENSION} px/side container limit — downsample or tile before encode`,
     );
   }
 }

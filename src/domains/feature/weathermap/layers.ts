@@ -5,7 +5,7 @@
 //   "wind"   — u/v/gust → R/G/B (the special 3-variable case)
 //   "scalar" — one variable → R (G/B zero), min/max scales
 // A future kind (e.g. two-variable wave height+direction) = one new encoder in
-// `services/layer-png.ts` + a case in the service's `encodeLayer` dispatch.
+// `services/layer-image.ts` + a case in the service's `encodeLayer` dispatch.
 //
 // Per-invocation narrowing (force-run task payload / CLI --layers) can only
 // select among enabled entries.

@@ -149,14 +149,14 @@ describe("WeatherMapService", () => {
         ]),
       );
       expect(mockStorage.put).toHaveBeenCalledWith(
-        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.png",
+        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.webp",
         expect.any(Buffer),
-        { contentType: "image/png" },
+        { contentType: "image/webp" },
       );
       expect(mockStorage.put).toHaveBeenCalledWith(
-        "weather-map/dwd_icon_d2/temperature/2026-07-15T1200Z.png",
+        "weather-map/dwd_icon_d2/temperature/2026-07-15T1200Z.webp",
         expect.any(Buffer),
-        { contentType: "image/png" },
+        { contentType: "image/webp" },
       );
       const windUpsert = mockRepo.upsertFrame.mock.calls
         .map(([values]) => values)
@@ -236,8 +236,8 @@ describe("WeatherMapService", () => {
       expect(summary.rendered).toBe(2);
       const keys = mockStorage.put.mock.calls.map(([key]) => key);
       expect(keys).toEqual([
-        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.png",
-        "weather-map/dwd_icon_d2/precipitation/2026-07-15T1200Z.png",
+        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.webp",
+        "weather-map/dwd_icon_d2/precipitation/2026-07-15T1200Z.webp",
       ]);
       // The union read only covers the due layers' variables.
       const requested = mockSource.fetchGrids.mock.calls[0][3];
@@ -275,7 +275,7 @@ describe("WeatherMapService", () => {
       );
       const keys = mockStorage.put.mock.calls.map(([key]) => key);
       expect(keys).not.toContain(
-        "weather-map/dwd_icon_d2/snowfall/2026-07-15T1200Z.png",
+        "weather-map/dwd_icon_d2/snowfall/2026-07-15T1200Z.webp",
       );
     });
 
@@ -527,10 +527,10 @@ describe("WeatherMapService", () => {
       );
       const keys = mockStorage.put.mock.calls.map(([key]) => key);
       expect(keys).toContain(
-        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.png",
+        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.webp",
       );
       expect(keys).toContain(
-        "weather-map/dwd_icon_d2/wind/2026-07-15T1300Z.png",
+        "weather-map/dwd_icon_d2/wind/2026-07-15T1300Z.webp",
       );
       // Pruning is the orchestrator's job — the child must not touch it.
       expect(mockRepo.findOlderThan).not.toHaveBeenCalled();
@@ -645,7 +645,7 @@ describe("WeatherMapService", () => {
       expect(manifest.run).toBe(RUN.toISOString());
       expect(manifest.frames[0]).toMatchObject({
         validTime: NOON.toISOString(),
-        url: "/v1/weather-map/frames/dwd_icon_d2/temperature/2026-07-15T1200Z.png",
+        url: "/v1/weather-map/frames/dwd_icon_d2/temperature/2026-07-15T1200Z.webp",
         bbox: BBOX,
         scales: { min: 10, max: 40 },
       });
@@ -661,7 +661,7 @@ describe("WeatherMapService", () => {
       const manifest = await service.getManifest("dwd_icon_d2", "wind");
 
       expect(manifest.frames[0].url).toBe(
-        "https://cdn.nortada.app/weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.png",
+        "https://cdn.nortada.app/weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.webp",
       );
     });
 
@@ -686,7 +686,7 @@ describe("WeatherMapService", () => {
       const result = await service.getFrameObject(
         "dwd_icon_d2",
         "wind",
-        "2026-07-15T1200Z.png",
+        "2026-07-15T1200Z.webp",
       );
 
       expect(mockRepo.findFrame).toHaveBeenCalledWith(
@@ -695,15 +695,16 @@ describe("WeatherMapService", () => {
         NOON,
       );
       expect(mockStorage.get).toHaveBeenCalledWith(
-        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.png",
+        "weather-map/dwd_icon_d2/wind/2026-07-15T1200Z.webp",
       );
-      expect(result.toString()).toBe("png-bytes");
+      expect(result.body.toString()).toBe("png-bytes");
+      expect(result.contentType).toBe("image/webp");
     });
 
     it("404s for an unknown frame or unparsable file name", async () => {
       mockRepo.findFrame.mockResolvedValue(undefined);
       await expect(
-        service.getFrameObject("dwd_icon_d2", "wind", "2026-07-15T1200Z.png"),
+        service.getFrameObject("dwd_icon_d2", "wind", "2026-07-15T1200Z.webp"),
       ).rejects.toThrow(GenericError);
       await expect(
         service.getFrameObject("dwd_icon_d2", "wind", "not-a-frame.png"),
@@ -714,7 +715,9 @@ describe("WeatherMapService", () => {
 
   describe("frame naming", () => {
     it("round-trips valid time ↔ file name", () => {
-      expect(frameFileName(NOON)).toBe("2026-07-15T1200Z.png");
+      expect(frameFileName(NOON)).toBe("2026-07-15T1200Z.webp");
+      expect(parseFrameFile("2026-07-15T1200Z.webp")).toEqual(NOON);
+      // Container-transition compat: pre-switch manifests still emit .png.
       expect(parseFrameFile("2026-07-15T1200Z.png")).toEqual(NOON);
       expect(parseFrameFile("garbage.png")).toBeNull();
     });

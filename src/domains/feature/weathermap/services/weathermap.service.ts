@@ -25,10 +25,10 @@ import {
 import type { WeatherMapRepository } from "../repositories/weathermap.repository";
 import {
   deriveWindComponents,
-  type EncodedLayerPng,
+  type EncodedLayerImage,
   encodeScalarLayer,
   encodeWindLayer,
-} from "./layer-png";
+} from "./layer-image";
 import { isPointList, regridOctahedral } from "./reduced-gaussian";
 
 const logger = createLogger("weathermap");
@@ -486,7 +486,7 @@ export class WeatherMapService extends BaseUseCase {
     modelId: string,
     layerId: string,
     file: string,
-  ): Promise<Buffer> {
+  ): Promise<{ body: Buffer; contentType: string }> {
     this.requireActiveModel(modelId);
     this.requireActiveLayer(layerId);
     const validTime = parseFrameFile(file);
@@ -507,7 +507,14 @@ export class WeatherMapService extends BaseUseCase {
         message: "Unknown weather-map frame",
       });
     }
-    return this.objectStorage.get(frame.objectKey);
+    // Content type follows the STORED object, not the requested file name —
+    // during the container transition a `.webp` URL can still be backed by
+    // a not-yet-rerendered `.png` row.
+    const body = await this.objectStorage.get(frame.objectKey);
+    const contentType = frame.objectKey.endsWith(".png")
+      ? "image/png"
+      : "image/webp";
+    return { body, contentType };
   }
 
   // ── internals ───────────────────────────────────────────────────────────────
@@ -736,7 +743,7 @@ export class WeatherMapService extends BaseUseCase {
     const rendered: string[] = [];
     const missingVariable: string[] = [];
     for (const layer of dueLayers) {
-      const encoded = this.encodeLayer(layer, grids);
+      const encoded = await this.encodeLayer(layer, grids);
       if (!encoded) {
         // The file genuinely lacks this layer's variable (e.g. snowfall in
         // summer runs) — not an error; the layer's manifest stays empty.
@@ -749,8 +756,16 @@ export class WeatherMapService extends BaseUseCase {
         continue;
       }
       const objectKey = frameObjectKey(model.id, layer.id, validTime);
-      await this.objectStorage.put(objectKey, encoded.png, {
-        contentType: "image/png",
+      // The PNG→WebP container switch changed this hour's object key: the
+      // row is the bucket's only index, so the superseded object must go
+      // NOW or it is orphaned forever (prune deletes by row key only).
+      const previous = await this.weatherMapRepository.findFrame(
+        model.id,
+        layer.id,
+        validTime,
+      );
+      await this.objectStorage.put(objectKey, encoded.image, {
+        contentType: "image/webp",
       });
       await this.weatherMapRepository.upsertFrame({
         model: model.id,
@@ -767,6 +782,17 @@ export class WeatherMapService extends BaseUseCase {
         scales: encoded.scales as unknown as JsonValue,
         renderedAt: new Date(),
       });
+      if (previous && previous.objectKey !== objectKey) {
+        try {
+          await this.objectStorage.delete(previous.objectKey);
+        } catch (error) {
+          // Best-effort: a failed delete only leaks one superseded object.
+          logger.warn("weather-map superseded object delete failed", {
+            objectKey: previous.objectKey,
+            error,
+          });
+        }
+      }
       rendered.push(layer.id);
       logger.debug("weather-map frame rendered", {
         model: model.id,
@@ -803,10 +829,10 @@ export class WeatherMapService extends BaseUseCase {
   }
 
   /** Kind dispatch — a new packing kind adds a case here + an encoder. */
-  private encodeLayer(
+  private async encodeLayer(
     layer: WeatherMapLayer,
     grids: Map<string, SpatialGrid>,
-  ): EncodedLayerPng | null {
+  ): Promise<EncodedLayerImage | null> {
     if (layer.kind === "wind") {
       let u = grids.get(WIND_U_VARIABLE);
       let v = grids.get(WIND_V_VARIABLE);
@@ -868,10 +894,10 @@ export class WeatherMapService extends BaseUseCase {
   }
 }
 
-/** `2026-07-15T12:00:00.000Z` → `2026-07-15T1200Z.png` (compact, key-safe). */
+/** `2026-07-15T12:00:00.000Z` → `2026-07-15T1200Z.webp` (compact, key-safe). */
 export function frameFileName(validTime: Date): string {
   const iso = validTime.toISOString();
-  return `${iso.slice(0, 13)}${iso.slice(14, 16)}Z.png`;
+  return `${iso.slice(0, 13)}${iso.slice(14, 16)}Z.webp`;
 }
 
 export function frameObjectKey(
@@ -882,9 +908,12 @@ export function frameObjectKey(
   return `weather-map/${modelId}/${layerId}/${frameFileName(validTime)}`;
 }
 
-/** Inverse of `frameFileName`; null when the name doesn't parse to a time. */
+/** Inverse of `frameFileName`; null when the name doesn't parse to a time.
+ * `.png` stays accepted for the container transition: manifests issued
+ * before the WebP switch still point old clients at `.png` proxy paths
+ * (the object served comes from the ROW's key either way). */
 export function parseFrameFile(file: string): Date | null {
-  const match = file.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})Z\.png$/);
+  const match = file.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})Z\.(?:webp|png)$/);
   if (!match) return null;
   const date = new Date(`${match[1]}T${match[2]}:${match[3]}:00Z`);
   return Number.isNaN(date.getTime()) ? null : date;

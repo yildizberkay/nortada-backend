@@ -73,7 +73,7 @@ weatherMapRoute.get(
 );
 
 // Fallback proxy for environments without OBJECT_STORAGE_PUBLIC_BASE_URL —
-// streams the PNG out of object storage. The strict file pattern + the DB
+// streams the frame out of object storage. The strict file pattern + the DB
 // existence check keep this from reading arbitrary keys in the shared bucket.
 weatherMapRoute.get(
   "/frames/:model/:layer/:file",
@@ -83,24 +83,26 @@ weatherMapRoute.get(
     responses: {
       200: {
         description:
-          "Weather-map texture PNG (wind: R=u, G=v, B=gust; scalar layers: R=value)",
-        content: { "image/png": {} },
+          "Weather-map texture, lossless WebP (wind: R=u, G=v, B=gust; scalar layers: R=value). Frames rendered before the container switch stream as image/png.",
+        content: { "image/webp": {}, "image/png": {} },
       },
     },
   }),
   zValidator("param", weatherMapFrameParamSchema),
   async (c) => {
     const { model, layer, file } = c.req.valid("param");
-    const png = await getContainer().weatherMapService.getFrameObject(
+    const frame = await getContainer().weatherMapService.getFrameObject(
       model,
       layer,
       file,
     );
-    c.header("Content-Type", "image/png");
+    // Content type follows the stored object — old rows still serve PNG
+    // until their model's next run repaints them as WebP.
+    c.header("Content-Type", frame.contentType);
     // Frames repaint in place when a model publishes (at most hourly) — a
     // short shared cache keeps repeat viewers off R2 without serving a stale
     // run for long.
     c.header("Cache-Control", "public, max-age=300");
-    return c.body(new Uint8Array(png));
+    return c.body(new Uint8Array(frame.body));
   },
 );
