@@ -22,11 +22,15 @@ import {
  * rate-limit knob, not a memory one (memory is per-machine now).
  * `maxDuration` covers a cold-start backfill of the longest-horizon model in
  * one run; a cut-off run resumes on retry / next orchestration because frames
- * upsert one by one. */
+ * upsert one by one.
+ * Machine: medium-1x (2 GB) — small-2x (1 GB) OOM-killed in prod 2026-07-16
+ * (global models hold ~120 MB of grids per in-flight hour × 2 concurrent
+ * hours, plus sharp encode buffers; UKMO Global 10 km raised the ceiling
+ * further). */
 export const weathermapRenderModelTask = schemaTask({
   id: WEATHERMAP_RENDER_MODEL_TASK_ID,
   schema: weathermapRenderModelSchema,
-  machine: "small-2x",
+  machine: "medium-1x",
   maxDuration: 3600,
   retry: { maxAttempts: 3 },
   queue: { concurrencyLimit: 6 },
