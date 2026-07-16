@@ -9,6 +9,11 @@
 //
 // Per-invocation narrowing (force-run task payload / CLI --layers) can only
 // select among enabled entries.
+//
+// INVARIANT: no two layers may share an `.om` variable — the render loop
+// frees each layer's grids the moment that layer encodes
+// (weathermap.service.ts renderValidTime), so a shared variable would be
+// deleted out from under the later layer.
 
 interface WeatherMapLayerBase {
   /** Public id — appears in the API, object keys, and DB rows. */

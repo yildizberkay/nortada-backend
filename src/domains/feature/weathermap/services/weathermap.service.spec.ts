@@ -11,6 +11,7 @@ import type {
 
 import type { WeatherMapRepository } from "../repositories/weathermap.repository";
 import {
+  adaptiveHourConcurrency,
   frameFileName,
   frameObjectKey,
   parseFrameFile,
@@ -119,7 +120,9 @@ describe("WeatherMapService", () => {
     mockRepo.findFreshFrames.mockResolvedValue([]);
     mockRepo.findOlderThan.mockResolvedValue([]);
     mockSource.fetchLatest.mockResolvedValue(latest());
-    mockSource.fetchGrids.mockResolvedValue(allGrids());
+    // A FRESH map per call — the real client returns a new Map per fetch,
+    // and the service now consumes (deletes from) the map it is given.
+    mockSource.fetchGrids.mockImplementation(async () => allGrids());
   });
 
   describe("refresh", () => {
@@ -182,10 +185,14 @@ describe("WeatherMapService", () => {
       });
       // The run output carries its own profiler — the native compression
       // really ran (sharp), bytes were uploaded, and every phase is a
-      // non-negative cumulative counter.
+      // non-negative cumulative counter. The memory trio (measured hour
+      // bytes, chosen concurrency, peak RSS) is what sizes the machine.
       expect(summary.profile.webpMs).toBeGreaterThan(0);
       expect(summary.profile.uploadedBytes).toBeGreaterThan(0);
       expect(summary.profile.wallMs).toBeGreaterThan(0);
+      expect(summary.profile.hourGridBytes).toBeGreaterThan(0);
+      expect(summary.profile.hourConcurrency).toBeGreaterThanOrEqual(1);
+      expect(summary.profile.maxRssBytes).toBeGreaterThan(0);
       for (const phase of Object.values(summary.profile)) {
         expect(phase).toBeGreaterThanOrEqual(0);
       }
@@ -605,6 +612,29 @@ describe("WeatherMapService", () => {
       // Pruning is the orchestrator's job — the child must not touch it.
       expect(mockRepo.findOlderThan).not.toHaveBeenCalled();
       expect(mockRepo.deleteByIds).not.toHaveBeenCalled();
+      // The fan-out child measured the hour and chose a concurrency (tiny
+      // test grids → the cap).
+      expect(summary.profile.hourGridBytes).toBeGreaterThan(0);
+      expect(summary.profile.hourConcurrency).toBe(4);
+    });
+
+    it("falls back to the concurrency cap when the FIRST hour fails unmeasured", async () => {
+      const one = new Date("2026-07-15T13:00:00Z");
+      const two = new Date("2026-07-15T14:00:00Z");
+      mockSource.fetchLatest.mockResolvedValue(
+        latest({ validTimes: [NOON, one, two] }),
+      );
+      // First hour renders ALONE and exhausts its retry (2 rejections) —
+      // no measurement happens, so the remaining hours get the full cap.
+      mockSource.fetchGrids
+        .mockRejectedValueOnce(new Error("archive blip"))
+        .mockRejectedValueOnce(new Error("archive blip"));
+
+      const summary = await service.refreshModelById("dwd_icon_d2", NOW);
+
+      expect(summary.frameErrors).toBe(1);
+      expect(summary.rendered).toBe(8); // the 2 surviving hours × 4 layers
+      expect(summary.profile.hourConcurrency).toBe(4); // unmeasured → cap
     });
 
     it("reports up-to-date when the run already painted everything", async () => {
@@ -686,6 +716,34 @@ describe("WeatherMapService", () => {
         run: null,
         validThrough: null,
       });
+    });
+  });
+
+  describe("adaptiveHourConcurrency", () => {
+    const MB = 1024 * 1024;
+
+    it("keeps the cap for light regional hours (MET Nordic ≈ 100 MB)", () => {
+      expect(adaptiveHourConcurrency(100 * MB, 4)).toBe(4);
+    });
+
+    it("drops for grid-heavy hours (ECMWF IFS ≈ 300 MiB with regrid copies)", () => {
+      expect(adaptiveHourConcurrency(300 * MB, 4)).toBe(3);
+    });
+
+    it("drops harder as the hour grows (≈ 450 MiB → 2)", () => {
+      expect(adaptiveHourConcurrency(450 * MB, 4)).toBe(2);
+    });
+
+    it("never goes below one, however heavy the hour", () => {
+      expect(adaptiveHourConcurrency(1500 * MB, 4)).toBe(1);
+    });
+
+    it("falls back to the cap when the first hour never measured", () => {
+      expect(adaptiveHourConcurrency(0, 4)).toBe(4);
+    });
+
+    it("respects a lower caller cap (the in-process refresh path uses 1)", () => {
+      expect(adaptiveHourConcurrency(100 * MB, 1)).toBe(1);
     });
   });
 

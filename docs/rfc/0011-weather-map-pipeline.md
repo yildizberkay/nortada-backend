@@ -249,7 +249,8 @@ so "due" has one definition):
   one frame query → the due list `{ model, referenceTime, dueFrames }[]`.
   No grid reads. Per-model failures collect into `errors`.
 - `refreshModelById(modelId, now)` — the fan-out child's pass: renders every
-  due frame of ONE model at `CHILD_HOUR_CONCURRENCY`. Throws on model-level
+  due frame of ONE model at up to `CHILD_HOUR_CONCURRENCY` concurrent hours
+  (adaptive per the model's measured hour bytes, §8). Throws on model-level
   failure (the task retry owns recovery); never prunes.
 - `prune(now)` — public; called by the orchestrator each tick and by
   `refresh()` at the end of a full pass.
@@ -393,9 +394,14 @@ against the run output's `profile` ratios (§11). `maxDuration` 3600,
 `retry.maxAttempts: 3`, `queue.concurrencyLimit: 10`. Calls
 `weatherMapService.refreshModelById(model)`: re-reads `latest.json` (if the
 run advanced since planning, the child renders the newer one) and renders
-every due frame of that one model, with **`CHILD_HOUR_CONCURRENCY = 4`** valid
-hours in flight (overlaps range reads with encodes while stacking at most
-~½ GB of grids on the machine).
+every due frame of that one model, with up to **`CHILD_HOUR_CONCURRENCY =
+4`** valid hours in flight — ADAPTIVE per model (2026-07-16): the first hour
+renders alone and its measured grid bytes decide how many of the remaining
+hours fit the memory budget (`adaptiveHourConcurrency`, 1.2 GB grid budget ×
+1.3 safety). An hour's weight varies ~3× across models (regional ~100 MB vs
+`ecmwf_ifs` ~300 MB with its regrid copies) and the fixed 4 OOM-killed
+`ecmwf_ifs` on the 2 GB machine. Consumed layer grids are dropped as soon as
+their layer encodes, trimming the peak further.
 
 - The queue limit bounds how many models render at once **across machines** —
   every child hits the same Open-Meteo archive host, so it is a rate-limit
@@ -500,9 +506,13 @@ under `activities/`).
   trade-off), dbMs (frame find/upsert), wallMs (the model render's real
   elapsed time). Phase totals are summed across concurrently-rendering
   hours, so they exceed wallMs — read the ratios to see where task-seconds
-  (= Trigger spend) go before tuning machines/concurrency further. First
-  prod reading (metno_nordic_pp, 2026-07-16, pre-split): encode ≈ 80% of
-  task-seconds, fetch ≈ 13% — the pipeline is compression-bound.
+  (= Trigger spend) go before tuning machines/concurrency further. The
+  memory trio — hourGridBytes (heaviest measured hour), hourConcurrency
+  (what the adaptive formula chose), maxRssBytes (peak process RSS) — is the
+  data for machine-size decisions. First prod readings (2026-07-16):
+  webpMs ≈ 71–78% of task-seconds, packMs ≈ 4–6% — the pipeline is
+  compression-bound (a Rust rewrite of the JS side would cap out at ~5%;
+  WEBP_EFFORT is the real CPU lever, deliberately kept at 4 for frame size).
 - `Tracking.captureException` per failing model with `{ model }` context so
   one broken feed pages without hiding the other 19 (plan errors in the
   orchestrator; render errors in the failing child only).
@@ -525,9 +535,10 @@ Parallelism operates at three levels; bounds are deliberate:
   byte-identical vs sequential; 2.5 s → 0.8 s for 5 ICON-EU variables), and
   child enumeration is parallel-by-index (~0.6 s vs ~15 s sequential
   `getChildByName` scans).
-- **Valid times within a model** — `CHILD_HOUR_CONCURRENCY = 4` in a fan-out
-  child (a whole machine to itself: range reads overlap encodes across hours
-  while stacking at most ~800 MB on the medium-1x machine);
+- **Valid times within a model** — up to `CHILD_HOUR_CONCURRENCY = 4` in a
+  fan-out child (a whole machine to itself), chosen ADAPTIVELY per model
+  from the first hour's measured grid bytes (§8) so heavy models trade
+  parallelism for fitting the machine;
   sequential in the in-process `refresh`, which already runs 4 models in one
   process. One valid time failing (transient archive error) is retried once
   and then skipped in isolation (`frameErrors` in the summary) — a later
@@ -657,7 +668,11 @@ forward.
   — small-2x OOM-killed in prod 2026-07-16; the ~12 min long-horizon runs
   are attacked with hour-parallelism, not a 2×-price machine),
   `maxDuration 3600`, `queue.concurrencyLimit 10` (archive-host rate bound),
-  `CHILD_HOUR_CONCURRENCY 4`.
+  `CHILD_HOUR_CONCURRENCY 4` (a CAP — effective concurrency adapts to the
+  model's measured hour bytes, §8). Per-run machine overrides
+  (`trigger(..., { machine })`) stay an OPTIONAL future speed knob for a
+  heavy model whose adaptive (lower) concurrency proves too slow — decide
+  from the profile's `hourGridBytes`/`maxRssBytes`, never preemptively.
 - **Open — perpetually-due missing variables:** a layer whose variable a
   model never publishes (e.g. snowfall in summer) has no frame row, so its
   hours stay "due" and every tick fans out a child that range-reads and

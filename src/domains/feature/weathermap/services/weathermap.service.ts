@@ -66,15 +66,51 @@ const REGRID_HEIGHT = 1800;
 const MODEL_CONCURRENCY = 4;
 
 /**
- * Valid hours rendered concurrently inside ONE fan-out child
- * (`weathermap-render-model`), which has a whole machine to itself: 4
- * overlaps range reads with encodes across hours while stacking at most
- * ~800 MB (~120 MB of grids per global-model hour + encode buffers) — fits
- * the child's medium-1x (2 GB) machine with headroom. Raised from 2 after
- * long-horizon models took ~12 min per run (2026-07-16); tune further from
- * the run output's `profile` ratios, not by guessing.
+ * UPPER BOUND on valid hours rendered concurrently inside ONE fan-out child
+ * (`weathermap-render-model`), which has a whole machine to itself. The
+ * EFFECTIVE concurrency is adaptive per model (`adaptiveHourConcurrency`):
+ * the first hour renders alone and its measured grid bytes decide how many
+ * more fit the memory budget — an hour's weight varies ~3× across models
+ * (regional ~100 MB vs ECMWF IFS ~300 MB with its regrid copies), and the
+ * fixed 4 OOM-killed `ecmwf_ifs` on the 2 GB machine (2026-07-16).
  */
 const CHILD_HOUR_CONCURRENCY = 4;
+
+/** The grids' share of the child machine's memory (medium-1x, 2 GB): the
+ * rest is the Node baseline, per-file wasm heaps, and encode buffers. */
+const HOUR_MEMORY_BUDGET_BYTES = 1200 * 1024 * 1024;
+/** Multiplier on measured grid bytes per in-flight hour — covers the RGBA
+ * packing buffer, the reader's wasm heap, and GC lag on freed grids. */
+const HOUR_MEMORY_SAFETY = 1.3;
+
+/**
+ * How many hours fit the memory budget, given one hour's MEASURED grid
+ * bytes — clamped to [1, cap]. Unmeasured (first hour failed) → the cap,
+ * matching the old fixed behavior.
+ */
+export function adaptiveHourConcurrency(
+  hourGridBytes: number,
+  cap: number,
+): number {
+  if (hourGridBytes <= 0) return cap;
+  const fits = Math.floor(
+    HOUR_MEMORY_BUDGET_BYTES / (hourGridBytes * HOUR_MEMORY_SAFETY),
+  );
+  return Math.max(1, Math.min(cap, fits));
+}
+
+/** Peak RSS of THIS process so far — the "how much headroom is left on the
+ * machine" number for the run output (Linux reports KiB, macOS bytes). */
+function maxRssBytes(): number {
+  const max = process.resourceUsage().maxRSS;
+  return process.platform === "darwin" ? max : max * 1024;
+}
+
+const gridsBytes = (grids: Map<string, SpatialGrid>): number => {
+  let bytes = 0;
+  for (const grid of grids.values()) bytes += grid.data.byteLength;
+  return bytes;
+};
 
 /** `map` with at most `limit` callbacks in flight; result order preserved. */
 async function mapLimit<T, R>(
@@ -133,6 +169,14 @@ export interface WeatherMapRenderProfile {
   uploadMs: number;
   uploadedBytes: number;
   dbMs: number;
+  /** Heaviest measured hour: fetched grid bytes (+ regrid copies where a
+   * model regrids) — the input to `adaptiveHourConcurrency`. */
+  hourGridBytes: number;
+  /** The concurrency the adaptive formula actually chose for this model. */
+  hourConcurrency: number;
+  /** Peak process RSS when the model render finished — compare against the
+   * machine preset to pick the right machine with data, not guesses. */
+  maxRssBytes: number;
 }
 
 const emptyProfile = (): WeatherMapRenderProfile => ({
@@ -144,8 +188,14 @@ const emptyProfile = (): WeatherMapRenderProfile => ({
   uploadMs: 0,
   uploadedBytes: 0,
   dbMs: 0,
+  hourGridBytes: 0,
+  hourConcurrency: 0,
+  maxRssBytes: 0,
 });
 
+// Time/byte phases SUM across models; the memory fields take the MAX — a
+// multi-model aggregate's "worst hour / chosen concurrency / peak RSS" is
+// what sizes a machine, a sum would be meaningless.
 const addProfile = (
   into: WeatherMapRenderProfile,
   from: WeatherMapRenderProfile,
@@ -158,6 +208,9 @@ const addProfile = (
   into.uploadMs += from.uploadMs;
   into.uploadedBytes += from.uploadedBytes;
   into.dbMs += from.dbMs;
+  into.hourGridBytes = Math.max(into.hourGridBytes, from.hourGridBytes);
+  into.hourConcurrency = Math.max(into.hourConcurrency, from.hourConcurrency);
+  into.maxRssBytes = Math.max(into.maxRssBytes, from.maxRssBytes);
 };
 
 const roundProfile = (p: WeatherMapRenderProfile): WeatherMapRenderProfile => ({
@@ -169,6 +222,9 @@ const roundProfile = (p: WeatherMapRenderProfile): WeatherMapRenderProfile => ({
   uploadMs: Math.round(p.uploadMs),
   uploadedBytes: p.uploadedBytes,
   dbMs: Math.round(p.dbMs),
+  hourGridBytes: p.hourGridBytes,
+  hourConcurrency: p.hourConcurrency,
+  maxRssBytes: p.maxRssBytes,
 });
 
 /**
@@ -753,19 +809,45 @@ export class WeatherMapService extends BaseUseCase {
     // it (single-threaded JS, so plain += is safe).
     const profile = emptyProfile();
     const wallStart = performance.now();
-    const hourResults = await mapLimit(
-      plan.work,
+    // ADAPTIVE hour concurrency: the first hour renders ALONE and measures
+    // how many bytes of grids one hour of THIS model actually costs; that
+    // decides how many of the remaining hours may fly together. An hour's
+    // weight varies ~3× across models — a fixed value either wastes the
+    // machine (small models) or OOM-kills it (ecmwf_ifs, 2026-07-16).
+    const [firstWork, ...restWork] = plan.work;
+    const firstResult = firstWork
+      ? [
+          await this.renderValidTime(
+            model,
+            plan.referenceTime,
+            plan.bbox,
+            firstWork.validTime,
+            firstWork.dueLayers,
+            profile,
+          ),
+        ]
+      : [];
+    const effectiveConcurrency = adaptiveHourConcurrency(
+      profile.hourGridBytes,
       hourConcurrency,
-      ({ validTime, dueLayers }) =>
-        this.renderValidTime(
-          model,
-          plan.referenceTime,
-          plan.bbox,
-          validTime,
-          dueLayers,
-          profile,
-        ),
     );
+    profile.hourConcurrency = effectiveConcurrency;
+    const hourResults = [
+      ...firstResult,
+      ...(await mapLimit(
+        restWork,
+        effectiveConcurrency,
+        ({ validTime, dueLayers }) =>
+          this.renderValidTime(
+            model,
+            plan.referenceTime,
+            plan.bbox,
+            validTime,
+            dueLayers,
+            profile,
+          ),
+      )),
+    ];
 
     // Fold in valid-time order so counters/stats stay deterministic even when
     // hours rendered concurrently.
@@ -795,6 +877,7 @@ export class WeatherMapService extends BaseUseCase {
       }
     }
     profile.wallMs = performance.now() - wallStart;
+    profile.maxRssBytes = maxRssBytes();
     return {
       rendered,
       missingVariable,
@@ -836,6 +919,10 @@ export class WeatherMapService extends BaseUseCase {
         variables,
       );
       profile.fetchGridsMs += performance.now() - fetchStart;
+      // An hour's memory weight = the fetched grids, PLUS the regrid copies
+      // for models that resample (sources and targets coexist until GC) —
+      // this measurement drives `adaptiveHourConcurrency`.
+      let hourBytes = gridsBytes(grids);
       const regridStart = performance.now();
       // Reduced-Gaussian models (ECMWF IFS HRES) arrive as a flattened point
       // list, not a raster — resample onto the regular target grid before
@@ -864,6 +951,9 @@ export class WeatherMapService extends BaseUseCase {
         };
       }
       profile.regridMs += performance.now() - regridStart;
+      const regriddedBytes = gridsBytes(grids);
+      if (regriddedBytes !== hourBytes) hourBytes += regriddedBytes;
+      profile.hourGridBytes = Math.max(profile.hourGridBytes, hourBytes);
     } catch (error) {
       logger.warn("weather-map valid time failed; skipping this hour", {
         model: model.id,
@@ -881,6 +971,13 @@ export class WeatherMapService extends BaseUseCase {
       const encodeStart = performance.now();
       const encoded = await this.encodeLayer(layer, grids);
       const encodeTotal = performance.now() - encodeStart;
+      // A layer's variables are DONE once it encoded (or proved missing) —
+      // layers don't share variables, so drop the grids immediately instead
+      // of holding them for the rest of the hour: with several hours in
+      // flight this trims the machine's peak memory noticeably.
+      for (const variable of layerVariables(layer)) {
+        grids.delete(variable);
+      }
       if (encoded) {
         profile.webpMs += encoded.webpMs;
         profile.packMs += encodeTotal - encoded.webpMs;

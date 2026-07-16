@@ -26,7 +26,9 @@ import {
  * Machine: medium-1x (1 vCPU / 2 GB) — the cost-optimal preset: same
  * per-second price as small-2x (which OOM-killed in prod 2026-07-16; global
  * models hold ~120 MB of grids per in-flight hour plus encode buffers), and
- * 2 GB funds `CHILD_HOUR_CONCURRENCY = 4` (~800 MB peak) — attacking the
+ * 2 GB funds up to `CHILD_HOUR_CONCURRENCY = 4` concurrent hours (ADAPTIVE
+ * per model: the first hour's measured grid bytes decide how many fit the
+ * memory budget — grid-heavy models drop down instead of OOMing) — the
  * ~12 min long-horizon runs with parallelism instead of a 2×-price
  * medium-2x whose second vCPU can't speed up the single-threaded JS packing
  * loops anyway. Revisit against the run output's `profile` ratios: encode-
