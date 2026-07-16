@@ -23,16 +23,18 @@ import {
  * `maxDuration` covers a cold-start backfill of the longest-horizon model in
  * one run; a cut-off run resumes on retry / next orchestration because frames
  * upsert one by one.
- * Machine: medium-2x (2 vCPU / 4 GB) — small-2x (1 GB) OOM-killed in prod
- * 2026-07-16 (global models hold ~120 MB of grids per in-flight hour, plus
- * sharp encode buffers; UKMO Global 10 km raised the ceiling further), and
- * long-horizon models took ~12 min per run at 2 concurrent hours — the 4 GB
- * preset funds `CHILD_HOUR_CONCURRENCY = 4` (~½ GB of grids in flight) and
- * the second vCPU overlaps encodes. */
+ * Machine: medium-1x (1 vCPU / 2 GB) — the cost-optimal preset: same
+ * per-second price as small-2x (which OOM-killed in prod 2026-07-16; global
+ * models hold ~120 MB of grids per in-flight hour plus encode buffers), and
+ * 2 GB funds `CHILD_HOUR_CONCURRENCY = 4` (~800 MB peak) — attacking the
+ * ~12 min long-horizon runs with parallelism instead of a 2×-price
+ * medium-2x whose second vCPU can't speed up the single-threaded JS packing
+ * loops anyway. Revisit against the run output's `profile` ratios: encode-
+ * dominated → medium-2x or a lower WEBP_EFFORT; fetch-dominated → this. */
 export const weathermapRenderModelTask = schemaTask({
   id: WEATHERMAP_RENDER_MODEL_TASK_ID,
   schema: weathermapRenderModelSchema,
-  machine: "medium-2x",
+  machine: "medium-1x",
   maxDuration: 3600,
   retry: { maxAttempts: 3 },
   queue: { concurrencyLimit: 10 },

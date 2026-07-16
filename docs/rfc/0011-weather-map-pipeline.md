@@ -383,11 +383,13 @@ without failing the tick.
 
 ### `weathermap-render-model` (fan-out child)
 
-`schemaTask`, payload `{ model }`, `machine: "medium-2x"` (small-2x
-OOM-killed in prod 2026-07-16 — global models hold ~120 MB of grids per
-in-flight hour plus encode buffers; then medium-1x still left long-horizon
-models at ~12 min/run, so the 4 GB / 2 vCPU preset funds 4 concurrent hours
-and overlapped encodes), `maxDuration` 3600,
+`schemaTask`, payload `{ model }`, `machine: "medium-1x"` — the cost-optimal
+preset: same per-second price as small-2x (which OOM-killed in prod
+2026-07-16 — global models hold ~120 MB of grids per in-flight hour plus
+encode buffers) while its 2 GB funds 4 concurrent hours; the ~12 min
+long-horizon runs are attacked with parallelism, not a 2×-price medium-2x
+whose second vCPU can't speed the single-threaded JS packing loops. Revisit
+against the run output's `profile` ratios (§11). `maxDuration` 3600,
 `retry.maxAttempts: 3`, `queue.concurrencyLimit: 10`. Calls
 `weatherMapService.refreshModelById(model)`: re-reads `latest.json` (if the
 run advanced since planning, the child renders the newer one) and renders
@@ -486,8 +488,16 @@ under `activities/`).
 
 - Orchestrator log per tick: models checked / due list (model + run + due
   frame count) / plan errors / pruned. Each child run logs its own summary
-  (rendered / missingVariable / frameErrors / layerStats) and is tagged
-  `model:<id>` — per-model history is one dashboard filter.
+  (rendered / missingVariable / missingByLayer — the misses named per layer,
+  e.g. `{ snowfall: 117 }` / frameErrors / layerStats / profile) and is
+  tagged `model:<id>` — per-model history is one dashboard filter.
+- `profile` is the run output's own profiler (2026-07-16, for the cost
+  story): cumulative ms per phase — fetchGridsMs (archive range reads),
+  regridMs (reduced-Gaussian + LAEA JS resampling), encodeMs (JS channel
+  packing + libvips WebP), uploadMs (R2 puts), dbMs (frame find/upsert).
+  Summed across concurrently-rendering hours, so totals exceed wall-clock —
+  read the ratios to see where task-seconds (= Trigger spend) go before
+  tuning machines/concurrency further.
 - `Tracking.captureException` per failing model with `{ model }` context so
   one broken feed pages without hiding the other 19 (plan errors in the
   orchestrator; render errors in the failing child only).
@@ -512,7 +522,7 @@ Parallelism operates at three levels; bounds are deliberate:
   `getChildByName` scans).
 - **Valid times within a model** — `CHILD_HOUR_CONCURRENCY = 4` in a fan-out
   child (a whole machine to itself: range reads overlap encodes across hours
-  while stacking at most ~½ GB of grids on the medium-2x machine);
+  while stacking at most ~800 MB on the medium-1x machine);
   sequential in the in-process `refresh`, which already runs 4 models in one
   process. One valid time failing (transient archive error) is retried once
   and then skipped in isolation (`frameErrors` in the summary) — a later
@@ -638,8 +648,9 @@ forward.
   `prune`) instead of one monolithic render run. Idempotency: global-scoped
   `(model, referenceTime)` key with 1 h TTL — dedupes while a child works a
   run, re-fans an incomplete render afterwards. Child knobs are design
-  constants like everything else: `machine medium-2x` (small-2x OOM-killed
-  in prod 2026-07-16; medium-1x still ~12 min on long-horizon models),
+  constants like everything else: `machine medium-1x` (small-2x price, 2 GB
+  — small-2x OOM-killed in prod 2026-07-16; the ~12 min long-horizon runs
+  are attacked with hour-parallelism, not a 2×-price machine),
   `maxDuration 3600`, `queue.concurrencyLimit 10` (archive-host rate bound),
   `CHILD_HOUR_CONCURRENCY 4`.
 - **Open — perpetually-due missing variables:** a layer whose variable a
