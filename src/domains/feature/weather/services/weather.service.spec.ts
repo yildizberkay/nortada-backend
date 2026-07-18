@@ -124,10 +124,16 @@ describe("WeatherService", () => {
       expect(mockClient.fetchForecast).not.toHaveBeenCalled();
     });
 
-    it("rejects a sport the spot doesn't support", async () => {
-      await expect(
-        service.getConditions("spot-1", { sport: "kitesurf" }),
-      ).rejects.toMatchObject({ errorCode: "FORM_ERROR" });
+    it("scores any spot for the requested sport, even one it doesn't tag", async () => {
+      mockRepo.findCache.mockResolvedValue(undefined as never);
+
+      const result = await service.getConditions("spot-1", {
+        sport: "kitesurf",
+      });
+
+      // No sport gate: spot-1 isn't tagged kitesurf, but conditions are still
+      // computed with the kitesurf lens (ADR-0005) instead of throwing.
+      expect(result.sport).toBe("kitesurf");
     });
 
     it("serves stale cache when the fetch fails", async () => {

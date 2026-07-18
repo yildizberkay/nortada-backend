@@ -181,7 +181,10 @@ export class WeatherService extends BaseUseCase {
     const fc = await this.getOrFetchForecast(spot);
     const h = fc.payload.hourly;
 
-    const hourly = h.time.slice(0, 48).map((time, i) => ({
+    // Full fetched horizon (11 local days ≈ 264 h): the client's day strip
+    // lets the user open ANY outlook day's hour table, so a shorter slice
+    // here renders days 3+ as empty curves.
+    const hourly = h.time.map((time, i) => ({
       time,
       windSpeedMs: h.windSpeedMs[i] ?? 0,
       windGustsMs: h.windGustsMs[i] ?? 0,
@@ -241,10 +244,11 @@ export class WeatherService extends BaseUseCase {
     return { hotSpots: spots.length, refreshed, failures };
   }
 
-  /** Refresh run metadata for the pinned model's META SOURCES: the composite
-   * `icon_seamless` has no meta file of its own, so each member model gets
-   * its own row. One member failing must not lose the other's update; the
-   * run still fails (cron alerting) when EVERY member failed. */
+  /** Refresh update-cadence metadata for the reference models. `best_match`
+   * is a composite with no meta file of its own, so the members act as the
+   * stale-flag's cadence proxy (ADR-0004). One member failing must not lose
+   * the other's update; the run still fails (cron alerting) when EVERY
+   * member failed. */
   async refreshModelMeta(): Promise<void> {
     const failures: string[] = [];
     for (const model of FORECAST_MODEL_META_SOURCES) {
@@ -275,22 +279,18 @@ export class WeatherService extends BaseUseCase {
   // ── internals ───────────────────────────────────────────────────────────────
 
   private resolveSport(spot: SpotGeo, requested?: Sport): Sport {
-    if (requested) {
-      if (!spot.supportedSports.includes(requested)) {
-        throw new GenericError("FORM_ERROR", {
-          reason: WeatherReason.UNSUPPORTED_SPORT,
-          message: "This spot does not support the requested sport",
-        });
-      }
-      return requested;
-    }
-    return spot.supportedSports[0] ?? "other";
+    // Sport is only a scoring lens (decision thresholds + best-window), never
+    // a data gate: it doesn't change which forecast is fetched. supportedSports
+    // is OSM-sourced and sparse, so rejecting an untagged spot silently hides
+    // real ones (ADR-0005). Evaluate any spot for the sport the caller asked
+    // for; fall back to the spot's own first sport only when none is requested.
+    return requested ?? spot.supportedSports[0] ?? "other";
   }
 
-  /** The pinned model's run time + update cadence (for the "updated Xm ago /
-   * stale" story). `icon_seamless` has no meta of its own, so this reads the
-   * member models most-relevant first (ICON-EU drives our spots' near-term
-   * hours; ICON global is the fallback). */
+  /** Update cadence for the stale flag, read from the reference models
+   * most-frequent first (ICON-EU's 3 h beat, ICON global's 6 h fallback).
+   * Under `best_match` the lastRun is a member model's run — a cadence
+   * anchor only, never served as the payload's provenance (ADR-0004). */
   private async modelMeta(): Promise<{
     lastRun: Date | null;
     updateIntervalSec: number | null;
@@ -312,13 +312,16 @@ export class WeatherService extends BaseUseCase {
     meta: { lastRun: Date | null; updateIntervalSec: number | null },
   ) {
     // Stale when the provider fetch failed (fc.stale), OR our copy has aged past
-    // the model's update interval (mapping doc §3).
+    // the reference model's update interval (mapping doc §3).
     const agedOut =
       meta.updateIntervalSec != null &&
       Date.now() - fc.fetchedAt.getTime() > meta.updateIntervalSec * 1000;
     return {
       fetchedAt: fc.fetchedAt.toISOString(),
-      modelRun: meta.lastRun ? meta.lastRun.toISOString() : null,
+      // `best_match` resolves per-location — the ICON meta we track is a
+      // cadence proxy, NOT the served model's run, so no run is claimed
+      // (ADR-0004). Clients fall back to fetchedAt for their "updated" line.
+      modelRun: null,
       stale: fc.stale || agedOut,
       // Provenance rides every response so client attribution footnotes can
       // never drift from the model actually served (RFC-0005).

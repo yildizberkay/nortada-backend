@@ -101,21 +101,20 @@ const FORECAST_CURRENT = [
   "temperature_2m",
 ].join(",");
 
-// Pin the model so the served payload matches the model-metadata we read for
-// the freshness/stale signal (a bare best_match would resolve per-location and
-// make the "updated Xm ago / model run" story inconsistent). `icon_seamless` is
-// ICON global+EU stitched — solid for the Aegean beachhead. See otonom-kararlar.
-export const FORECAST_MODEL = "icon_seamless";
-// The composite `icon_seamless` has NO meta.json of its own (verified
-// 2026-07-16: /data/icon_seamless/... → 404), so run-freshness metadata comes
-// from its member models, most-relevant first: ICON-EU drives our spots'
-// near-term hours (Europe incl. the Aegean, 3 h cadence); ICON global fills
-// the long tail (6 h cadence).
+// Spot forecasts follow Open-Meteo's per-location best model (ADR-0004,
+// supersedes the icon_seamless pin): a UK spot gets UKMO, an Aegean spot gets
+// ICON-EU — the finest model available wherever the user adds spots. The
+// trade: `best_match` is a composite with no single model run, so freshness
+// can no longer claim one (`modelRun` is null; "updated" = our fetch time).
+export const FORECAST_MODEL = "best_match";
+// With no meta.json for composites, these member models' cadences serve ONLY
+// as the cache-aging proxy for the stale flag (ICON-EU's 3 h beat covers the
+// fastest common case) — never as run-provenance for the served payload.
 export const FORECAST_MODEL_META_SOURCES = ["dwd_icon_eu", "dwd_icon"];
 // Display-ready provenance for client attribution footnotes — lives NEXT TO
 // the pinned model so a model switch can't leave the label behind.
 export const FORECAST_SOURCE_DISPLAY = "Open-Meteo";
-export const FORECAST_MODEL_DISPLAY = "ICON";
+export const FORECAST_MODEL_DISPLAY = "Best match";
 
 const FORECAST_DAILY = ["sunrise", "sunset"].join(",");
 
