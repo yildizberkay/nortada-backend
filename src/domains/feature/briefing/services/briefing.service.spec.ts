@@ -181,16 +181,40 @@ describe("BriefingService", () => {
     expect(result.alternatives).toHaveLength(0);
   });
 
-  it("filters favorites that don't support the briefed sport", async () => {
+  it("evaluates favorites regardless of their sport tags (no sport gate)", async () => {
     mockFavorites.list.mockResolvedValue([
       spot("sup-only", { supportedSports: ["sup"] }),
     ]);
+    mockWeather.getConditions.mockResolvedValue(conditions("sup-only"));
 
     const result = await service.getBriefing(user, {});
 
-    expect(result.state).toBe("noSpots");
-    expect(result.pick).toBeNull();
-    expect(mockWeather.getConditions).not.toHaveBeenCalled();
+    // Sport is a scoring lens, not a pool gate: the sup-only favorite is still
+    // briefed for the requested sport (windsurf), never dropped.
+    expect(mockWeather.getConditions).toHaveBeenCalledWith("sup-only", {
+      sport: "windsurf",
+    });
+    expect(result.pick?.spot.uid).toBe("sup-only");
+  });
+
+  it("drops favorites beyond the local radius when a location is given", async () => {
+    mockFavorites.list.mockResolvedValue([
+      spot("here", { latitude: 40.95, longitude: 29.05 }), // at the anchor
+      spot("far", { latitude: 38.28, longitude: 26.37 }), // Çeşme, ~370 km away
+    ]);
+    mockWeather.getConditions.mockImplementation(async (uid) =>
+      conditions(uid),
+    );
+
+    const result = await service.getBriefing(user, { lat: 40.95, lon: 29.05 });
+
+    // Today is local: the far favorite is off today's list (it lives on the
+    // map) and never even fetched.
+    expect(result.pick?.spot.uid).toBe("here");
+    expect(mockWeather.getConditions).toHaveBeenCalledTimes(1);
+    expect(mockWeather.getConditions).toHaveBeenCalledWith("here", {
+      sport: "windsurf",
+    });
   });
 
   it("falls back to nearby spots (with distance) when there are no favorites", async () => {

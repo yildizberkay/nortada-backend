@@ -46,3 +46,4 @@ under a page.
 - [0002 — UKV's LAEA target raster is the inscribed box](0002-ukv-laea-target-is-the-inscribed-box.md)
 - [0003 — Frame URLs carry the run version; objects are immutable](0003-versioned-frame-urls-immutable-objects.md)
 - [0004 — Spot forecasts follow Open-Meteo's best_match](0004-spot-forecasts-follow-best-match.md)
+- [0005 — Today briefs local spots; sport is a lens, not a gate](0005-today-briefs-local-spots.md)
