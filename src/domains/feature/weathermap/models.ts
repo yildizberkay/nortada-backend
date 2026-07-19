@@ -4,6 +4,16 @@
 // the default; per-invocation narrowing (force-run payload / CLI --models)
 // can only select among enabled entries, never resurrect a disabled one.
 //
+// LAUNCH SET (user decision 2026-07-19, cost trim ~$3.3/day → ~$1.7/day):
+// enabled = the three global flagships (ECMWF 9 km, GFS 13 km, ICON) +
+// regionals that hit a priority watersports market — ICON-EU (Med belt:
+// Tarifa/Greece/Alaçatı), ICON-D2 (German/Baltic coast + Garda), ICON-2I
+// (Garda/Sicily), KNMI Harmonie (NL/DK volume market), AROME France HD
+// (Mistral spots), GeoSphere (Neusiedlersee), UKV (UK sailing: Solent).
+// Disabled entries cover no priority market (Nordics, CH, JP, US, …) or
+// duplicate a kept family member coarsely (ifs025, ARPEGE, UKMO global).
+// Re-enabling is one flag: the next orchestrate tick backfills the model.
+//
 // Evaluated and rejected (not registry entries — do not re-add without
 // re-verifying):
 // - `ncep_gfs025` (GFS 0.25°): data_spatial files carry pressure-level fields
@@ -73,7 +83,7 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     label: "IFS 0.25°",
     provider: "ECMWF",
     resolutionKm: 25,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "geosphere_arome_austria",
@@ -94,14 +104,14 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     label: "GSM 0.5°",
     provider: "JMA",
     resolutionKm: 55,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "jma_msm",
     label: "MSM 0.05°",
     provider: "JMA",
     resolutionKm: 5,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "ncep_gfs013",
@@ -116,14 +126,14 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     label: "ARPEGE World",
     provider: "Météo-France",
     resolutionKm: 25,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "meteofrance_arpege_europe",
     label: "ARPEGE Europe",
     provider: "Météo-France",
     resolutionKm: 11,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "meteofrance_arome_france_hd",
@@ -144,35 +154,35 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     label: "Harmonie AROME",
     provider: "DMI",
     resolutionKm: 2,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "ncep_hrrr_conus",
     label: "HRRR",
     provider: "NOAA NCEP",
     resolutionKm: 3,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "metno_nordic_pp",
     label: "MET Nordic",
     provider: "MET Norway",
     resolutionKm: 1,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "meteoswiss_icon_ch1",
     label: "ICON-CH1",
     provider: "MeteoSwiss",
     resolutionKm: 1,
-    enabled: true,
+    enabled: false,
   },
   {
     id: "meteoswiss_icon_ch2",
     label: "ICON-CH2",
     provider: "MeteoSwiss",
     resolutionKm: 2,
-    enabled: true,
+    enabled: false,
   },
   // Regular lat/lon global grid (2560×1920, 0.141°×0.094°, verified live
   // 2026-07-16); publishes 10 m wind as speed+direction — the encoder's
@@ -182,7 +192,7 @@ export const WEATHER_MAP_MODELS: readonly WeatherMapModel[] = [
     label: "UKMO Global 10 km",
     provider: "UK Met Office",
     resolutionKm: 10,
-    enabled: true,
+    enabled: false,
     renderMachine: "medium-2x", // global raster (2560×1920), ~120 MiB hours
   },
   // Published as a NATIVE Lambert-Azimuthal projected raster, not lat/lon

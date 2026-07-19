@@ -85,6 +85,7 @@ const mockRepo = {
   findFrame: jest.fn(),
   upsertFrame: jest.fn(),
   findOlderThan: jest.fn(),
+  findBeyond: jest.fn(),
   deleteByIds: jest.fn(),
 } as unknown as jest.Mocked<WeatherMapRepository>;
 
@@ -119,6 +120,7 @@ describe("WeatherMapService", () => {
     mockRepo.findFrames.mockResolvedValue([]);
     mockRepo.findFreshFrames.mockResolvedValue([]);
     mockRepo.findOlderThan.mockResolvedValue([]);
+    mockRepo.findBeyond.mockResolvedValue([]);
     mockSource.fetchLatest.mockResolvedValue(latest());
     // A FRESH map per call — the real client returns a new Map per fetch,
     // and the service now consumes (deletes from) the map it is given.
@@ -198,8 +200,9 @@ describe("WeatherMapService", () => {
       }
     });
 
-    it("renders the run's FULL remaining horizon by default (no cap)", async () => {
-      const farFuture = new Date("2026-07-20T12:00:00Z"); // T+5 days
+    it("renders up to the 10-day default horizon, not beyond", async () => {
+      const farFuture = new Date("2026-07-20T12:00:00Z"); // T+5 days — in cap
+      const beyondCap = new Date("2026-07-25T12:00:00Z"); // NOW+242 h — out
       mockSource.fetchLatest.mockResolvedValue(
         latest({
           validTimes: [
@@ -208,19 +211,27 @@ describe("WeatherMapService", () => {
               Array.from({ length: 15 }, (_, i) => i),
             ),
             farFuture,
+            beyondCap,
           ],
         }),
       );
 
       const summary = await service.refresh(NOW, D2);
 
-      // Lookback drops 09:00; 10:00 … 23:00 (14) + the distant hour all render.
+      // Lookback drops 09:00; 10:00 … 23:00 (14) + the distant hour render;
+      // the beyond-cap hour never does.
       expect(summary.rendered).toBe(15 * 4);
       expect(mockSource.fetchGrids).toHaveBeenCalledTimes(15);
       expect(mockSource.fetchGrids).toHaveBeenCalledWith(
         "dwd_icon_d2",
         RUN,
         farFuture,
+        expect.any(Array),
+      );
+      expect(mockSource.fetchGrids).not.toHaveBeenCalledWith(
+        "dwd_icon_d2",
+        RUN,
+        beyondCap,
         expect.any(Array),
       );
     });
@@ -496,6 +507,19 @@ describe("WeatherMapService", () => {
       // The failed object's row survives so the next prune retries it.
       expect(mockRepo.deleteByIds).toHaveBeenCalledWith([7]);
     });
+
+    it("prunes frames beyond the 10-day horizon cap (stale pre-cap tail)", async () => {
+      const beyondCap = new Date("2026-07-26T12:00:00Z"); // NOW+266 h
+      const tail = frame("dwd_icon_d2", "wind", beyondCap, { id: 9 });
+      mockSource.fetchLatest.mockResolvedValue(latest({ validTimes: [] }));
+      mockRepo.findBeyond.mockResolvedValue([tail]);
+
+      const summary = await service.refresh(NOW, D2);
+
+      expect(summary.pruned).toBe(1);
+      expect(mockStorage.delete).toHaveBeenCalledWith(tail.objectKey);
+      expect(mockRepo.deleteByIds).toHaveBeenCalledWith([9]);
+    });
   });
 
   describe("planRefresh", () => {
@@ -611,6 +635,7 @@ describe("WeatherMapService", () => {
       );
       // Pruning is the orchestrator's job — the child must not touch it.
       expect(mockRepo.findOlderThan).not.toHaveBeenCalled();
+      expect(mockRepo.findBeyond).not.toHaveBeenCalled();
       expect(mockRepo.deleteByIds).not.toHaveBeenCalled();
       // The fan-out child measured the hour and chose a concurrency (tiny
       // test grids → the cap).
@@ -676,8 +701,10 @@ describe("WeatherMapService", () => {
       // The full enabled registry — disabled entries stay out.
       const ids = catalog.models.map((m) => m.model);
       expect(ids).toContain("dwd_icon_d2");
-      expect(ids).toContain("ukmo_global_deterministic_10km");
       expect(ids).toContain("ukmo_uk_deterministic_2km");
+      // Disabled registry entries (launch trim 2026-07-19) never surface.
+      expect(ids).not.toContain("ukmo_global_deterministic_10km");
+      expect(ids).not.toContain("metno_nordic_pp");
       expect(catalog.layers).toEqual([
         { layer: "wind", label: "Wind", unit: "m/s" },
         { layer: "temperature", label: "Temperature", unit: "°C" },

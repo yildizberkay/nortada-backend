@@ -119,11 +119,14 @@ Two design choices carry the RFC:
   R2 plus its decode metadata row in Postgres. A frame is **overwritten in
   place** when a newer run covers the same valid time (`runTime` tells which
   run last painted it).
-- **Horizon** — how far ahead of "now" the pipeline renders. UNCAPPED by
-  design (user decision 2026-07-15): every valid time the run publishes is
-  rendered — GFS reaches ~16 days, regionals ~2 days; distant hours arrive at
-  the model's own 3/6-hourly granularity. Force-run/CLI can narrow
-  per-invocation.
+- **Horizon** — how far ahead of "now" the pipeline renders. Capped at **240 h
+  (10 days)** by default (`DEFAULT_HORIZON_HOURS`, user decision 2026-07-19,
+  supersedes the uncapped 2026-07-15 decision): 10 days is the product's
+  forecast promise; rendering past it (GFS publishes to ~16 days) was pure
+  spend with no product surface (~$0.2/day, ADR context: Trigger.dev cost
+  trim). Within the cap every valid time the run publishes is rendered —
+  regionals reach ~2 days; distant hours arrive at the model's own 3/6-hourly
+  granularity. Force-run/CLI can override per-invocation.
 - **Manifest** — the client-facing listing of one (model, layer)'s current
   frames, ordered by valid time.
 - **Catalog** — the models + layers listing the client builds its pickers
@@ -270,8 +273,10 @@ so "due" has one definition):
      the due layers' variables, encode each layer (kind dispatch), `put` to
      R2, upsert the frame row. A layer whose variable is absent from the file
      is counted `missingVariable` and skipped — not an error.
-  5. Prune: frames with `validTime < now - RETENTION` → delete R2 object +
-     row (row only after the object delete succeeded, so failures retry).
+  5. Prune: frames with `validTime < now - RETENTION` or `validTime > now +
+     DEFAULT_HORIZON_HOURS` (the stale pre-cap tail, 2026-07-19) → delete R2
+     object + row (row only after the object delete succeeded, so failures
+     retry).
 - `getCatalog()` / `getManifest(model, layer)` / `getFrameObject(model,
   layer, file)` — thin reads for the routes.
 
@@ -308,31 +313,36 @@ absent in the July run → exercised the soft-skip path.
 ### Model registry (`models.ts`)
 
 Static, code-reviewed list (id → label/provider/resolution/enabled). The
-user-chosen set (2026-07-15) plus verified recommendations:
+user-chosen set (2026-07-15), trimmed to the **launch set** 2026-07-19
+(Trigger.dev cost: ~$3.3/day → ~$1.7/day). Enabled = the three global
+flagships + regionals hitting a priority watersports market (kite/windsurf/
+sailing); disabled entries cover no priority market or duplicate a kept
+family member coarsely. Re-enabling is one flag — the next orchestrate tick
+backfills the model:
 
 | data_spatial id | label | enabled |
 | --- | --- | --- |
-| `dwd_icon` | DWD ICON 11 km global | ✅ |
-| `dwd_icon_eu` | DWD ICON-EU 6.5 km | ✅ |
-| `dwd_icon_d2` | DWD ICON-D2 2.2 km | ✅ |
-| `ecmwf_ifs` | ECMWF IFS HRES 9 km | ✅ — ships the native O1280 reduced-Gaussian POINT LIST (`[1 × 6,599,680]`), not a lat/lon raster (encoding it verbatim produced unopenable 6.6M×1 PNGs, found in prod 2026-07-16). `reduced-gaussian.ts` resamples it onto a regular 0.1° grid (3600×1800, nearest-neighbor; layout verified r=0.9999 against the same run's `ecmwf_ifs025`) before the shared encode path. |
-| `ecmwf_ifs025` | ECMWF IFS 0.25° | ✅ |
-| `geosphere_arome_austria` | GeoSphere AROME 1 km | ✅ |
-| `italia_meteo_arpae_icon_2i` | ItaliaMeteo ICON-2I 2.2 km | ✅ |
-| `jma_gsm` | JMA GSM 0.5° | ✅ |
-| `jma_msm` | JMA MSM 0.05° | ✅ |
-| `ncep_gfs013` | NOAA GFS 0.13° | ✅ |
-| `meteofrance_arpege_world025` | ARPEGE World 0.25° | ✅ |
-| `meteofrance_arpege_europe` | ARPEGE Europe 0.1° | ✅ |
-| `meteofrance_arome_france_hd` | AROME France HD 0.01° | ✅ |
-| `knmi_harmonie_arome_europe` | KNMI Harmonie 2 km | ✅ |
-| `dmi_harmonie_arome_europe` | DMI Harmonie 2 km | ✅ |
-| `ncep_hrrr_conus` | NOAA HRRR 3 km | ✅ |
-| `metno_nordic_pp` | MET Norway Nordic 1 km | ✅ |
-| `meteoswiss_icon_ch1` | MeteoSwiss ICON-CH1 1 km | ✅ |
-| `meteoswiss_icon_ch2` | MeteoSwiss ICON-CH2 2 km | ✅ |
-| `ukmo_global_deterministic_10km` | UKMO Global 10 km | ✅ — added 2026-07-16 (UK/sailing market). Regular lat/lon 2560×1920; wind ships as speed+direction, covered by the derive-u/v encode path. |
-| `ukmo_uk_deterministic_2km` | UKMO UKV 2 km | ✅ — enabled 2026-07-16 (UK/sailing market). NATIVE Lambert-Azimuthal projected raster (zero NaN fringe, r=0.61 vs UKMO global under an equirect assumption); `laea-regrid.ts` resamples onto a regular 0.02° grid (1626×872), frames carry the TARGET raster's bbox. Validated vs the point API: r=0.9989, RMSE 0.23 °C. |
+| `dwd_icon` | DWD ICON 11 km global | ✅ global flagship |
+| `dwd_icon_eu` | DWD ICON-EU 6.5 km | ✅ Med belt (Tarifa/Greece/Alaçatı) |
+| `dwd_icon_d2` | DWD ICON-D2 2.2 km | ✅ German/Baltic coast + Garda |
+| `ecmwf_ifs` | ECMWF IFS HRES 9 km | ✅ global flagship — ships the native O1280 reduced-Gaussian POINT LIST (`[1 × 6,599,680]`), not a lat/lon raster (encoding it verbatim produced unopenable 6.6M×1 PNGs, found in prod 2026-07-16). `reduced-gaussian.ts` resamples it onto a regular 0.1° grid (3600×1800, nearest-neighbor; layout verified r=0.9999 against the same run's `ecmwf_ifs025`) before the shared encode path. |
+| `ecmwf_ifs025` | ECMWF IFS 0.25° | ❌ 2026-07-19 — coarse duplicate of `ecmwf_ifs` |
+| `geosphere_arome_austria` | GeoSphere AROME 1 km | ✅ Neusiedlersee |
+| `italia_meteo_arpae_icon_2i` | ItaliaMeteo ICON-2I 2.2 km | ✅ Garda/Sicily |
+| `jma_gsm` | JMA GSM 0.5° | ❌ 2026-07-19 — no priority market |
+| `jma_msm` | JMA MSM 0.05° | ❌ 2026-07-19 — no priority market |
+| `ncep_gfs013` | NOAA GFS 0.13° | ✅ global flagship (13 km vs Windy's 22 km GFS) |
+| `meteofrance_arpege_world025` | ARPEGE World 0.25° | ❌ 2026-07-19 — global tier covered by ECMWF/GFS/ICON |
+| `meteofrance_arpege_europe` | ARPEGE Europe 0.1° | ❌ 2026-07-19 — Europe covered by ICON-EU |
+| `meteofrance_arome_france_hd` | AROME France HD 0.01° | ✅ French Med (Mistral spots) |
+| `knmi_harmonie_arome_europe` | KNMI Harmonie 2 km | ✅ NL/DK windsurf volume market |
+| `dmi_harmonie_arome_europe` | DMI Harmonie 2 km | ❌ 2026-07-19 — Nordic domain, no priority market (~$0.25/day) |
+| `ncep_hrrr_conus` | NOAA HRRR 3 km | ❌ 2026-07-19 — US market not at launch |
+| `metno_nordic_pp` | MET Norway Nordic 1 km | ❌ 2026-07-19 — hourly publisher, ~$1/day (a third of the whole bill), no priority market |
+| `meteoswiss_icon_ch1` | MeteoSwiss ICON-CH1 1 km | ❌ 2026-07-19 — niche (Silvaplana), not at launch |
+| `meteoswiss_icon_ch2` | MeteoSwiss ICON-CH2 2 km | ❌ 2026-07-19 — as CH1 |
+| `ukmo_global_deterministic_10km` | UKMO Global 10 km | ❌ 2026-07-19 — global tier covered by ECMWF/GFS/ICON. (Added 2026-07-16; regular lat/lon 2560×1920; wind ships as speed+direction, covered by the derive-u/v encode path.) |
+| `ukmo_uk_deterministic_2km` | UKMO UKV 2 km | ✅ UK sailing (Solent/Cowes) — enabled 2026-07-16. NATIVE Lambert-Azimuthal projected raster (zero NaN fringe, r=0.61 vs UKMO global under an equirect assumption); `laea-regrid.ts` resamples onto a regular 0.02° grid (1626×872), frames carry the TARGET raster's bbox. Validated vs the point API: r=0.9989, RMSE 0.23 °C. |
 
 Evaluated and rejected (removed from the registry 2026-07-16, kept here so
 nobody re-discovers it): `ncep_gfs025` (GFS 0.25°) — its data_spatial files
@@ -563,8 +573,9 @@ interrupted child resumes on retry / next orchestration (per-frame upsert).
 Concurrent producers (two children of consecutive runs, or a child + a
 force-run) are safe: frames upsert key-stably and `runTime` only moves
 forward.
-- R2 storage is bounded by the models' own horizons:
-  `frames ≤ Σ(model valid times) × layers` ≈ 1 300 × 4 ≈ 5 000 objects,
+- R2 storage is bounded by the models' own horizons (capped at 240 h):
+  `frames ≤ Σ(model valid times) × layers` ≈ 900 × 4 ≈ 3 600 objects for the
+  10-model launch set,
   overwritten in place; past hours prune after 1 h. Cold-start backfill of
   the full horizons exceeds one task window — the per-frame upsert makes
   successive ticks resume where the previous one stopped, and steady state
@@ -654,8 +665,14 @@ forward.
 - **Resolved — retention:** 1 h (`RETENTION_HOURS = 1`, design constant;
   user decision 2026-07-15) — frames prune exactly when they leave the
   manifest window; no look-back scrubbing.
-- **Resolved — horizon:** uncapped (user decision 2026-07-15) — the run's own
-  horizon is the horizon; the map can scrub as far as the model goes.
+- **Resolved — horizon:** 240 h / 10 days (`DEFAULT_HORIZON_HOURS`, user
+  decision 2026-07-19, supersedes "uncapped" of 2026-07-15) — 10 days is the
+  product's forecast promise; the GFS 10–16-day tail was pure render spend.
+  Prune also sweeps frames beyond the cap. Force-run/CLI can still override
+  per-invocation.
+- **Resolved — launch model set:** 10 of 21 registry entries enabled
+  (user decision 2026-07-19, §7 table) — Trigger.dev spend trim ~$3.3/day →
+  ~$1.7/day; disabled models are one flag away from returning.
 - **Resolved — no env tunables:** horizon/retention/base-URL/concurrency are
   engineering decisions this RFC owns, hardcoded as constants; per-invocation
   narrowing (force-run payload / CLI flags) covers dev needs. Only genuinely

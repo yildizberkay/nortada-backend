@@ -37,13 +37,18 @@ const logger = createLogger("weathermap");
 /** How far back a frame stays in the manifest — the hour in progress. */
 const MANIFEST_LOOKBACK_MS = 60 * 60 * 1000;
 
-// Design constants (RFC-0011 §16, user decisions 2026-07-15), not deployment
-// config. Horizon is UNCAPPED — every valid time the model's run provides is
+// Design constants (RFC-0011 §16, user decisions 2026-07-15 + 2026-07-19),
+// not deployment config. Horizon defaults to 10 days — the product's forecast
+// promise; rendering past it (GFS publishes to 384 h) is pure spend with no
+// product surface. Within the cap every valid time the run provides is
 // rendered (distant hours arrive at the model's own 3/6-hourly granularity);
-// per-invocation narrowing for dev/force-runs goes through
+// per-invocation override for dev/force-runs goes through
 // `WeatherMapRefreshOverrides.horizonHours`. Past frames are pruned after 1 h
-// — exactly when they drop out of the manifest.
+// — exactly when they drop out of the manifest; frames beyond the horizon cap
+// are pruned too (pre-cap renders left a stale >240 h tail that would
+// otherwise be served for days).
 const RETENTION_HOURS = 1;
+const DEFAULT_HORIZON_HOURS = 240;
 
 /**
  * Target raster for reduced-Gaussian models (ECMWF IFS HRES native ~9 km ≈
@@ -397,7 +402,7 @@ export class WeatherMapService extends BaseUseCase {
     logger.info("weather-map refresh started", {
       models: models.length,
       layers: layers.map((l) => l.id),
-      horizon: horizonHours ?? "model-max",
+      horizon: horizonHours ?? DEFAULT_HORIZON_HOURS,
       concurrency: MODEL_CONCURRENCY,
     });
     // Models refresh CONCURRENTLY (bounded pool) — each is independent and
@@ -763,14 +768,13 @@ export class WeatherMapService extends BaseUseCase {
     }
 
     const windowStart = new Date(now.getTime() - MANIFEST_LOOKBACK_MS);
-    // No default upper bound — the run's own horizon IS the horizon; an
-    // override (force-run/CLI) narrows it for cheap dev renders.
-    const windowEnd =
-      horizonHours === undefined
-        ? undefined
-        : new Date(now.getTime() + horizonHours * 60 * 60 * 1000);
+    // Capped at the 10-day product horizon by default; an override
+    // (force-run/CLI) narrows it for cheap dev renders.
+    const windowEnd = new Date(
+      now.getTime() + (horizonHours ?? DEFAULT_HORIZON_HOURS) * 60 * 60 * 1000,
+    );
     const inWindow = latest.validTimes.filter(
-      (t) => t >= windowStart && (windowEnd === undefined || t <= windowEnd),
+      (t) => t >= windowStart && t <= windowEnd,
     );
     if (inWindow.length === 0) {
       return { ...base, status: "up-to-date", work: [] };
@@ -1127,12 +1131,20 @@ export class WeatherMapService extends BaseUseCase {
     return encodeScalarLayer(grid);
   }
 
-  /** Delete frames (rows + objects) behind the retention cutoff. Public
+  /** Delete frames (rows + objects) behind the retention cutoff, plus any
+   * beyond the horizon cap (pre-cap renders painted GFS out to 384 h; without
+   * this sweep that stale tail would sit in the manifest for days). Public
    * because the orchestrator task owns pruning on the fan-out path (children
    * never prune); `refresh` keeps calling it at the end of a full pass. */
   async prune(now: Date): Promise<number> {
     const cutoff = new Date(now.getTime() - RETENTION_HOURS * 60 * 60 * 1000);
-    const expired = await this.weatherMapRepository.findOlderThan(cutoff);
+    const horizonEnd = new Date(
+      now.getTime() + DEFAULT_HORIZON_HOURS * 60 * 60 * 1000,
+    );
+    const expired = [
+      ...(await this.weatherMapRepository.findOlderThan(cutoff)),
+      ...(await this.weatherMapRepository.findBeyond(horizonEnd)),
+    ];
     if (expired.length === 0) return 0;
     const deletable: number[] = [];
     for (const frame of expired) {

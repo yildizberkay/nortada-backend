@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, lt } from "drizzle-orm";
 
 import type { DBManager, NewWeatherMapFrame, WeatherMapFrame } from "@/db";
 import { weatherMapFrameTable } from "@/db/schema";
@@ -122,6 +122,14 @@ export class WeatherMapRepository extends BaseRepository {
     return this.dbClient.query.weatherMapFrame.findMany({
       columns: frameColumns,
       where: lt(weatherMapFrameTable.validTime, cutoff),
+    });
+  }
+
+  /** Frames whose valid time lies beyond the horizon cap (for pruning). */
+  async findBeyond(cutoff: Date): Promise<WeatherMapFrame[]> {
+    return this.dbClient.query.weatherMapFrame.findMany({
+      columns: frameColumns,
+      where: gt(weatherMapFrameTable.validTime, cutoff),
     });
   }
 
