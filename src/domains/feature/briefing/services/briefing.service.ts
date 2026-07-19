@@ -104,11 +104,15 @@ interface Candidate {
 
 const DECISION_RANK = { go: 0, watch: 1, skip: 2 } as const;
 const CONFIDENCE_SCORE = { high: 1, medium: 0.85, low: 0.65 } as const;
+// Reasons that justify the red "risky" briefing state. Direction codes
+// (offshore_risk, cross_offshore_caution) are deliberately absent — direction
+// never hardens the verdict; it surfaces as the amber advisory (ADR-0006).
+// wind_above_ideal is the pro band (ADR-0007): a 38 kt day should headline
+// as caution for a general audience even though the verdict stays "watch".
 const SAFETY_REASONS: ReadonlySet<DecisionReason> = new Set([
-  "offshore_risk",
-  "cross_offshore_caution",
   "gusts_overpowering",
   "storm_risk",
+  "wind_above_ideal",
 ]);
 
 export class BriefingService extends BaseUseCase {

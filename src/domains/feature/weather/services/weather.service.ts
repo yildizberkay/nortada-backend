@@ -117,8 +117,6 @@ export class WeatherService extends BaseUseCase {
       weatherCode: current.weatherCode,
       // `current` block has no CAPE — use the nearest hour.
       capeJkg: forecast.hourly.capeJkg[0],
-      windDirectionDeg: current.windDirectionDeg,
-      shoreBearingDeg: spot.shoreBearingDeg,
     });
 
     const confidence = computeConfidence({
@@ -128,7 +126,12 @@ export class WeatherService extends BaseUseCase {
         forecast.hourly.precipitationProbability[0] ?? 0,
     });
 
-    const window = bestWindow(forecast.hourly, sport, spot.shoreBearingDeg);
+    const window = bestWindow(
+      forecast.hourly,
+      sport,
+      undefined,
+      this.daylightMask(forecast),
+    );
 
     return {
       spotUid,
@@ -197,8 +200,6 @@ export class WeatherService extends BaseUseCase {
         gustMs: h.windGustsMs[i] ?? 0,
         weatherCode: h.weatherCode[i] ?? 0,
         capeJkg: h.capeJkg[i],
-        windDirectionDeg: h.windDirectionDeg[i],
-        shoreBearingDeg: spot.shoreBearingDeg,
       }),
     }));
 
@@ -208,12 +209,7 @@ export class WeatherService extends BaseUseCase {
       sport,
       utcOffsetSeconds: fc.payload.utcOffsetSeconds,
       hourly,
-      daily: this.deriveDaily(
-        fc.payload,
-        sport,
-        spot.shoreBearingDeg,
-        freshness.stale,
-      ),
+      daily: this.deriveDaily(fc.payload, sport, freshness.stale),
       freshness,
     };
   }
@@ -429,14 +425,33 @@ export class WeatherService extends BaseUseCase {
     return { payload, fetchedAt, modelRun: null, stale: false };
   }
 
+  /** Per-hour "is this daylight" mask, same indexing as `forecast.hourly`.
+   * Times are ISO UTC (unixtime-sourced), so plain epoch interval checks are
+   * safe. Days whose sunrise/sunset are missing leave their hours `true` —
+   * daylight only ever FILTERS a window (fail open, per ADR-0008). */
+  private daylightMask(forecast: ForecastPayload): boolean[] {
+    const spans: [number, number][] = [];
+    for (let i = 0; i < forecast.daily.date.length; i++) {
+      const rise = Date.parse(forecast.daily.sunrise[i] ?? "");
+      const set = Date.parse(forecast.daily.sunset[i] ?? "");
+      if (Number.isFinite(rise) && Number.isFinite(set))
+        spans.push([rise, set]);
+    }
+    return forecast.hourly.time.map((time) => {
+      const t = Date.parse(time);
+      if (spans.length === 0) return true;
+      return spans.some(([rise, set]) => t >= rise && t < set);
+    });
+  }
+
   private deriveDaily(
     forecast: ForecastPayload,
     sport: Sport,
-    shoreBearingDeg: number | null,
     stale: boolean,
   ): ForecastDay[] {
     const h = forecast.hourly;
     const offsetMs = forecast.utcOffsetSeconds * 1000;
+    const isDay = this.daylightMask(forecast);
 
     // Group hour indices by the spot's LOCAL calendar day — that is the day
     // the client's outlook strip renders (a 21:00 local go-window must not
@@ -495,8 +510,6 @@ export class WeatherService extends BaseUseCase {
           gustMs,
           weatherCode: h.weatherCode[i] ?? 0,
           capeJkg: h.capeJkg[i],
-          windDirectionDeg: h.windDirectionDeg[i],
-          shoreBearingDeg,
         });
         if (rank[hourDecision] < rank[decision]) decision = hourDecision;
       }
@@ -528,8 +541,8 @@ export class WeatherService extends BaseUseCase {
         bestWindow: bestWindow(
           daySeries,
           sport,
-          shoreBearingDeg,
           indices.length,
+          indices.map((i) => isDay[i] ?? true),
         ),
         sunrise: sun.get(date)?.sunrise ?? null,
         sunset: sun.get(date)?.sunset ?? null,

@@ -35,6 +35,7 @@ export const briefingStates = [
 const decisionReason = z.enum([
   "wind_in_ideal_band",
   "wind_below_ideal",
+  "wind_strong",
   "wind_above_ideal",
   "too_light",
   "too_strong",

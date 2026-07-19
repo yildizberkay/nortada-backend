@@ -47,3 +47,6 @@ under a page.
 - [0003 — Frame URLs carry the run version; objects are immutable](0003-versioned-frame-urls-immutable-objects.md)
 - [0004 — Spot forecasts follow Open-Meteo's best_match](0004-spot-forecasts-follow-best-match.md)
 - [0005 — Today briefs local spots; sport is a lens, not a gate](0005-today-briefs-local-spots.md)
+- [0006 — Wind strength is the only verdict parameter; direction is advisory-only](0006-wind-strength-is-the-only-verdict-parameter.md)
+- [0007 — GO is one wide band; skip means calm or storm-force, nothing else](0007-go-is-wide-skip-is-calm-or-storm.md)
+- [0008 — Windows are daylight-bound; sailing is exempt](0008-windows-are-daylight-bound-sailing-exempt.md)

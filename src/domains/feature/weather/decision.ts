@@ -7,42 +7,116 @@ export type Decision = "go" | "watch" | "skip";
 export type Confidence = "low" | "medium" | "high";
 
 interface WindThreshold {
-  minMs: number; // below → too light
-  idealMinMs: number;
-  idealMaxMs: number;
-  maxMs: number; // above → too strong
+  minMs: number; // below → calm skip ("no wind", soft copy — not a warning)
+  idealMinMs: number; // go floor; minMs..here = doable-but-light watch
+  strongMs: number; // within go, above → "wind_strong" explanation note
+  proMs: number; // above → experts-only watch ("go, but very carefully")
+  extremeMs: number; // above → skip (storm-force)
+  overpowerMs: number; // gusts above → watch; the sport's holdable gust limit
+  daylightBound: boolean; // window only counts daylight hours (night riding
+  // isn't a thing for these sports; sailing is exempt — night sailing is a
+  // legitimate discipline/training)
 }
 
 /**
- * Per-sport ideal wind bands in canonical SI m/s (1 kt ≈ 0.5144 m/s). Bands are
- * research-backed from watersports sources (windup.live, mackiteboarding,
- * kiteworldwide, dinghy/Beaufort guides, SUP/kayak safety guides — see
- * docs/otonom-kararlar.md §24) at a general/INTERMEDIATE skill level. Per-skill
- * bands (a beginner's ceiling is much lower) are a documented fast-follow tied
- * to threading the user's experience in. SUP/kayak invert the usual logic —
- * flat water is best, so more wind is worse (ideal band starts at 0).
+ * Per-sport wind bands in canonical SI m/s (1 kt ≈ 0.5144 m/s). Reworked per
+ * ADR-0007: GO is one wide rideable band (the old ideal + strong-but-fine
+ * ranges merged); verdicts stop gatekeeping and the nuance rides the reason
+ * codes (`wind_strong`, `wind_above_ideal`). Skip only means "no wind" (below
+ * min, calm copy) or "storm-force" (above extreme, 45 kt for every wind
+ * sport). SUP/kayak/surfing keep their inverted flat-water logic unchanged
+ * (strongMs = proMs → no strong note; their old bands are preserved).
+ * Per-skill bands stay the documented fast-follow.
  *
- *   sport     too-light(skip) │  IDEAL (go)  │ too-strong(skip)   [knots]
- *   windsurf     <10           │   12 – 25    │   >35
- *   wingfoil     <11           │   13 – 22    │   >30
- *   kitesurf     <10           │   12 – 25    │   >33
- *   sailing      <4            │    8 – 16    │   >25   (dinghy reefs ~20)
- *   sup           —            │    0 – 5     │   >15
- *   kayak         —            │    0 – 6     │   >16
- *   surfing       —            │    0 – 8     │   >20  (wind ruins the wave face)
- *   other        <4            │    8 – 20    │   >30
+ *   sport     calm(skip) │ light(watch) │    GO     │ strong-note │ pro(watch) │ extreme(skip)   [knots]
+ *   windsurf     <6      │    6 – 10    │  10 – 35  │    25+      │  35 – 45   │   >45
+ *   wingfoil     <11     │   11 – 13    │  13 – 30  │    22+      │  30 – 45   │   >45
+ *   kitesurf     <10     │   10 – 12    │  12 – 33  │    25+      │  33 – 45   │   >45
+ *   sailing      <4      │    4 – 8     │   8 – 25  │    16+      │  25 – 45   │   >45
+ *   sup           —      │      —       │   0 – 5   │     —       │   5 – 15   │   >15
+ *   kayak         —      │      —       │   0 – 6   │     —       │   6 – 16   │   >16
+ *   surfing       —      │      —       │   0 – 8   │     —       │   8 – 20   │   >20
+ *   other        <4      │    4 – 8     │   8 – 30  │    20+      │  30 – 45   │   >45
  */
+const EXTREME_MS = 23.1; // 45 kt — storm-force for every wind sport
+// prettier-ignore
 const THRESHOLDS: Record<Sport, WindThreshold> = {
-  windsurf: { minMs: 5.1, idealMinMs: 6.2, idealMaxMs: 12.9, maxMs: 18.0 },
-  wingfoil: { minMs: 5.7, idealMinMs: 6.7, idealMaxMs: 11.3, maxMs: 15.4 },
-  kitesurf: { minMs: 5.1, idealMinMs: 6.2, idealMaxMs: 12.9, maxMs: 17.0 },
-  sailing: { minMs: 2.1, idealMinMs: 4.1, idealMaxMs: 8.2, maxMs: 12.9 },
-  sup: { minMs: 0, idealMinMs: 0, idealMaxMs: 2.6, maxMs: 7.7 },
-  kayak: { minMs: 0, idealMinMs: 0, idealMaxMs: 3.1, maxMs: 8.2 },
+  windsurf: {
+    minMs: 3.1,
+    idealMinMs: 5.1,
+    strongMs: 12.9,
+    proMs: 18.0,
+    extremeMs: EXTREME_MS,
+    overpowerMs: 18.0,
+    daylightBound: true,
+  },
+  wingfoil: {
+    minMs: 5.7,
+    idealMinMs: 6.7,
+    strongMs: 11.3,
+    proMs: 15.4,
+    extremeMs: EXTREME_MS,
+    overpowerMs: 15.4,
+    daylightBound: true,
+  },
+  kitesurf: {
+    minMs: 5.1,
+    idealMinMs: 6.2,
+    strongMs: 12.9,
+    proMs: 17.0,
+    extremeMs: EXTREME_MS,
+    overpowerMs: 17.0,
+    daylightBound: true,
+  },
+  sailing: {
+    minMs: 2.1,
+    idealMinMs: 4.1,
+    strongMs: 8.2,
+    proMs: 12.9,
+    extremeMs: EXTREME_MS,
+    overpowerMs: 12.9,
+    daylightBound: false,
+  },
+  // Inverted flat-water sports: proMs = strongMs (no strong note; the pro
+  // band IS their old watch band) and the gust limit is their old ceiling.
+  sup: {
+    minMs: 0,
+    idealMinMs: 0,
+    strongMs: 2.6,
+    proMs: 2.6,
+    extremeMs: 7.7,
+    overpowerMs: 7.7,
+    daylightBound: true,
+  },
+  kayak: {
+    minMs: 0,
+    idealMinMs: 0,
+    strongMs: 3.1,
+    proMs: 3.1,
+    extremeMs: 8.2,
+    overpowerMs: 8.2,
+    daylightBound: true,
+  },
   // Wave-riding inverts like SUP: glassy/light is ideal, strong wind chops the
   // face. (Swell quality itself is a marine-data fast-follow.)
-  surfing: { minMs: 0, idealMinMs: 0, idealMaxMs: 4.1, maxMs: 10.3 },
-  other: { minMs: 2.1, idealMinMs: 4.1, idealMaxMs: 10.3, maxMs: 15.4 },
+  surfing: {
+    minMs: 0,
+    idealMinMs: 0,
+    strongMs: 4.1,
+    proMs: 4.1,
+    extremeMs: 10.3,
+    overpowerMs: 10.3,
+    daylightBound: true,
+  },
+  other: {
+    minMs: 2.1,
+    idealMinMs: 4.1,
+    strongMs: 10.3,
+    proMs: 15.4,
+    extremeMs: EXTREME_MS,
+    overpowerMs: 15.4,
+    daylightBound: true,
+  },
 };
 
 // WMO weather codes.
@@ -58,23 +132,31 @@ const SEVERITY: Record<Decision, number> = { go: 0, watch: 1, skip: 2 };
 const worse = (a: Decision, b: Decision): Decision =>
   SEVERITY[a] >= SEVERITY[b] ? a : b;
 
+/** What the verdict sees: wind strength and weather only. Shore side is
+ * deliberately NOT here (ADR-0006) — direction never moves a verdict; it is
+ * surfaced as an advisory reason via `ReasonInput` instead. */
 export interface DecisionInput {
   sport: Sport;
   windMs: number;
   gustMs: number;
   weatherCode: number;
   capeJkg?: number;
+}
+
+/** Reasons additionally describe the shore side (advisory-only). */
+export interface ReasonInput extends DecisionInput {
   // Meteorological "from" direction; combined with shoreBearing → side.
   windDirectionDeg?: number;
   shoreBearingDeg?: number | null;
 }
 
-const sideOf = (input: DecisionInput): WindSide | undefined =>
+const sideOf = (input: ReasonInput): WindSide | undefined =>
   input.shoreBearingDeg != null && input.windDirectionDeg != null
     ? windSide(input.shoreBearingDeg, input.windDirectionDeg)
     : undefined;
 
-/** Go/Watch/Skip for a single hour. Modifiers can only downgrade. */
+/** Go/Watch/Skip for a single hour, from wind STRENGTH and weather alone.
+ * Modifiers can only downgrade. */
 export function computeDecision(input: DecisionInput): Decision {
   const { sport, windMs, gustMs, weatherCode, capeJkg } = input;
   const t = THRESHOLDS[sport];
@@ -82,24 +164,18 @@ export function computeDecision(input: DecisionInput): Decision {
   if (isThunderstorm(weatherCode)) return "skip";
 
   let d: Decision;
-  if (windMs < t.minMs) d = "skip";
-  else if (windMs < t.idealMinMs) d = "watch";
-  else if (windMs <= t.idealMaxMs) d = "go";
-  else if (windMs <= t.maxMs) d = "watch";
-  else d = "skip";
+  if (windMs < t.minMs)
+    d = "skip"; // calm — "no wind", not a warning
+  else if (windMs < t.idealMinMs)
+    d = "watch"; // light — doable, not ideal
+  else if (windMs <= t.proMs) d = "go";
+  else if (windMs <= t.extremeMs)
+    d = "watch"; // experts only, carefully
+  else d = "skip"; // storm-force
 
-  // Gusts overpowering the sport's ceiling → caution even if the mean is fine.
-  if (gustMs > t.maxMs) d = worse(d, "watch");
-
-  // Offshore wind blows the rider out to sea — the canonical life-threatening
-  // case. Scale with strength: strong offshore → skip; else watch. Cross-offshore
-  // (still a strong seaward component) gets a watch too.
-  const side = sideOf(input);
-  if (side === "offshore") {
-    d = worse(d, windMs > t.idealMaxMs ? "skip" : "watch");
-  } else if (side === "cross-offshore") {
-    d = worse(d, "watch");
-  }
+  // Gusts overpowering what the sport can hold → caution even if the mean
+  // sits comfortably in the go band.
+  if (gustMs > t.overpowerMs) d = worse(d, "watch");
 
   // Pre-storm instability (before weather_code catches up).
   if (capeJkg != null) {
@@ -118,9 +194,10 @@ export function computeDecision(input: DecisionInput): Decision {
 export type DecisionReason =
   | "wind_in_ideal_band"
   | "wind_below_ideal"
-  | "wind_above_ideal"
-  | "too_light"
-  | "too_strong"
+  | "wind_strong" // upper GO band — solid day, size down
+  | "wind_above_ideal" // pro watch band — go, but experienced + careful
+  | "too_light" // calm — soft "no wind" copy, never a warning
+  | "too_strong" // storm-force extreme
   | "onshore"
   | "cross_onshore"
   | "cross_shore"
@@ -134,28 +211,33 @@ export type DecisionReason =
 
 const GUSTY_SPREAD_MS = 4; // noticeable gust spread; > ceiling = overpowering
 
-/** Midpoint of the sport's ideal band — the briefing's ranking tiebreak
- * ("closest to perfect wind") without leaking the threshold table. */
+/** Midpoint of the sport's sweet spot (go floor → strong-note boundary) —
+ * the briefing's ranking tiebreak ("closest to perfect wind") without leaking
+ * the threshold table. Deliberately NOT the merged go band's midpoint: ranking
+ * should still prefer 17 kt over 30 kt for a windsurfer. */
 export function idealBandMidMs(sport: Sport): number {
   const t = THRESHOLDS[sport];
-  return (t.idealMinMs + t.idealMaxMs) / 2;
+  return (t.idealMinMs + t.strongMs) / 2;
 }
 
 /**
- * The explanation counterpart of `computeDecision`: the same inputs, the same
- * `THRESHOLDS`, but a priority-ordered reason list (band → shore side → gust
- * character → storm/precip) instead of a verdict. Kept separate so the hot
- * verdict paths (hourly loops, dailies) never pay for reason allocation.
+ * The explanation counterpart of `computeDecision`: the same thresholds, but a
+ * priority-ordered reason list (band → shore side → gust character →
+ * storm/precip) instead of a verdict. Shore side appears HERE only — it
+ * informs (and drives the client's direction advisory) but never scores
+ * (ADR-0006). Kept separate so the hot verdict paths (hourly loops, dailies)
+ * never pay for reason allocation.
  */
-export function decisionReasons(input: DecisionInput): DecisionReason[] {
+export function decisionReasons(input: ReasonInput): DecisionReason[] {
   const { sport, windMs, gustMs, weatherCode, capeJkg } = input;
   const t = THRESHOLDS[sport];
   const reasons: DecisionReason[] = [];
 
   if (windMs < t.minMs) reasons.push("too_light");
   else if (windMs < t.idealMinMs) reasons.push("wind_below_ideal");
-  else if (windMs <= t.idealMaxMs) reasons.push("wind_in_ideal_band");
-  else if (windMs <= t.maxMs) reasons.push("wind_above_ideal");
+  else if (windMs <= t.strongMs) reasons.push("wind_in_ideal_band");
+  else if (windMs <= t.proMs) reasons.push("wind_strong");
+  else if (windMs <= t.extremeMs) reasons.push("wind_above_ideal");
   else reasons.push("too_strong");
 
   const side = sideOf(input);
@@ -166,7 +248,7 @@ export function decisionReasons(input: DecisionInput): DecisionReason[] {
   else if (side === "onshore") reasons.push("onshore");
 
   const spread = gustMs - windMs;
-  if (gustMs > t.maxMs) reasons.push("gusts_overpowering");
+  if (gustMs > t.overpowerMs) reasons.push("gusts_overpowering");
   else if (spread > GUSTY_SPREAD_MS) reasons.push("gusty");
   else reasons.push("steady_wind");
 
@@ -215,13 +297,21 @@ export interface BestWindow {
  * The soonest contiguous run of "go" hours within the next `horizonHours`.
  * Returns null when nothing is suitable. "Soonest" beats "longest" — a rider
  * wants to know when they can go out today, not the theoretically best slot.
+ * Strength-only like the verdict it derives from (ADR-0006): an offshore day
+ * with ideal wind still gets its window; the direction advisory rides along
+ * separately.
  */
 export function bestWindow(
   hourly: HourlySeries,
   sport: Sport,
-  shoreBearingDeg: number | null,
   horizonHours = 48,
+  // Per-hour daylight mask (same indexing as `hourly`). For daylight-bound
+  // sports a night hour never joins a window — nobody plans a session they
+  // can't see. A missing mask fails OPEN (hour counts): daylight is a window
+  // filter, never a reason to hide wind.
+  isDay?: boolean[],
 ): BestWindow | null {
+  const t = THRESHOLDS[sport];
   const n = Math.min(hourly.time.length, horizonHours);
   let runStart = -1;
   let peak = 0;
@@ -233,11 +323,11 @@ export function bestWindow(
       gustMs: hourly.windGustsMs[i] ?? 0,
       weatherCode: hourly.weatherCode[i] ?? 0,
       capeJkg: hourly.capeJkg[i],
-      windDirectionDeg: hourly.windDirectionDeg[i],
-      shoreBearingDeg,
     });
+    const usable =
+      decision === "go" && (!t.daylightBound || isDay?.[i] !== false);
 
-    if (decision === "go") {
+    if (usable) {
       if (runStart === -1) {
         runStart = i;
         peak = 0;

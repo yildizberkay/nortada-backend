@@ -18,12 +18,13 @@ describe("computeDecision", () => {
     ).toBe("go");
   });
 
-  it("windsurf: watch when marginal-light", () => {
+  it("windsurf: watch when light-but-doable", () => {
+    // 4 m/s ≈ 8 kt — below the 10 kt go floor, above the 6 kt calm floor.
     expect(
       computeDecision({
         sport: "windsurf",
-        windMs: 6,
-        gustMs: 8,
+        windMs: 4,
+        gustMs: 6,
         weatherCode: 0,
       }),
     ).toBe("watch");
@@ -68,18 +69,17 @@ describe("computeDecision", () => {
     ).toBe("skip");
   });
 
-  it("offshore wind downgrades go → watch (safety)", () => {
-    // West-facing shore (bearing 270); wind FROM the east (90) is offshore.
+  it("offshore wind never moves the verdict (advisory-only, ADR-0006)", () => {
+    // Ideal-band wind stays "go" no matter the shore side — direction is
+    // surfaced by decisionReasons, not scored here.
     expect(
       computeDecision({
         sport: "windsurf",
         windMs: 10,
         gustMs: 12,
         weatherCode: 0,
-        windDirectionDeg: 90,
-        shoreBearingDeg: 270,
       }),
-    ).toBe("watch");
+    ).toBe("go");
   });
 
   it("overpowering gusts downgrade go → watch", () => {
@@ -93,18 +93,17 @@ describe("computeDecision", () => {
     ).toBe("watch");
   });
 
-  it("strong offshore wind downgrades all the way to skip", () => {
-    // 16 m/s > windsurf idealMax (14) + offshore → skip (can't get back).
+  it("pro-band wind is a watch, not a skip (ADR-0007)", () => {
+    // 20 m/s ≈ 39 kt — above the 35 kt go ceiling, under the 45 kt extreme:
+    // "go, but experienced and careful", never a flat skip.
     expect(
       computeDecision({
         sport: "windsurf",
-        windMs: 16,
-        gustMs: 18,
+        windMs: 20,
+        gustMs: 21,
         weatherCode: 0,
-        windDirectionDeg: 90,
-        shoreBearingDeg: 270,
       }),
-    ).toBe("skip");
+    ).toBe("watch");
   });
 
   it("pre-storm CAPE downgrades before the storm code appears", () => {
@@ -173,7 +172,7 @@ describe("bestWindow", () => {
 
   it("finds the soonest contiguous go-run (exclusive end boundary)", () => {
     // hours: light, GO, GO, light... → covers 01:00 and 02:00, ends at 03:00.
-    const w = bestWindow(series([3, 10, 11, 3, 3]), "windsurf", null);
+    const w = bestWindow(series([3, 10, 11, 3, 3]), "windsurf");
     expect(w).not.toBeNull();
     expect(w?.start).toBe("2026-07-11T01:00");
     expect(w?.end).toBe("2026-07-11T03:00");
@@ -181,7 +180,47 @@ describe("bestWindow", () => {
   });
 
   it("returns null when nothing is suitable", () => {
-    expect(bestWindow(series([2, 2, 2]), "windsurf", null)).toBeNull();
+    expect(bestWindow(series([2, 2, 2]), "windsurf")).toBeNull();
+  });
+
+  it("night go-hours never join a windsurf window (ADR-0008)", () => {
+    // go-run 01:00–04:00, but 03:00+ is dark → the window ends at 03:00 and
+    // the post-sunset go-hour forms no window of its own.
+    const w = bestWindow(series([3, 10, 11, 12, 3]), "windsurf", undefined, [
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(w?.start).toBe("2026-07-11T01:00");
+    expect(w?.end).toBe("2026-07-11T03:00");
+    expect(w?.peakWindMs).toBe(11);
+    expect(
+      bestWindow(series([3, 3, 10, 11, 3]), "windsurf", undefined, [
+        true,
+        true,
+        false,
+        false,
+        true,
+      ]),
+    ).toBeNull();
+  });
+
+  it("sailing is daylight-exempt: night racing/training is real", () => {
+    const w = bestWindow(series([1, 5, 6, 1, 1]), "sailing", undefined, [
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(w?.start).toBe("2026-07-11T01:00");
+    expect(w?.end).toBe("2026-07-11T03:00");
+  });
+
+  it("a missing daylight mask fails open", () => {
+    expect(bestWindow(series([3, 10, 11, 3, 3]), "windsurf")).not.toBeNull();
   });
 });
 
@@ -203,18 +242,18 @@ describe("decisionReasons", () => {
     ]);
   });
 
-  it("flags the offshore life-safety case alongside the skip verdict", () => {
+  it("flags offshore in the reasons while the verdict stays strength-only", () => {
     const input = {
       sport: "windsurf" as const,
-      windMs: 14, // above ideal → offshore scales to skip
+      windMs: 14, // upper GO band (ADR-0007): strong note, still a go
       gustMs: 16,
       weatherCode: 0,
       windDirectionDeg: 180,
       shoreBearingDeg: 0,
     };
-    expect(computeDecision(input)).toBe("skip");
+    expect(computeDecision(input)).toBe("go");
     expect(decisionReasons(input)).toEqual([
-      "wind_above_ideal",
+      "wind_strong",
       "offshore_risk",
       "steady_wind",
     ]);

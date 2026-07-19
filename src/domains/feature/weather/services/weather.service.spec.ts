@@ -192,11 +192,10 @@ describe("WeatherService", () => {
       ).toBeLessThanOrEqual(4);
       expect(day.decision).toBe("go"); // 10 m/s windsurf hour
       expect(day.confidence).toBe("high");
-      expect(day.bestWindow).toEqual({
-        start: "2026-07-11T22:00:00Z",
-        end: "2026-07-11T23:00:00Z",
-        peakWindMs: 10,
-      });
+      // Both hours are 01:00/02:00 LOCAL — dark. The verdict stays go
+      // (strength-only), but a windsurf window never spans night hours
+      // (ADR-0008), so this day honestly has none.
+      expect(day.bestWindow).toBeNull();
       expect(day.sunrise).toBe("2026-07-12T02:48:00Z");
       expect(day.sunset).toBe("2026-07-12T17:38:00Z");
     });
