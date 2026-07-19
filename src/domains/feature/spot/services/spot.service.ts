@@ -10,6 +10,7 @@ import type {
   SpotWithDistance,
 } from "../repositories/spot.repository";
 import type {
+  CreatePrivateSpotInput,
   ModerateSpotInput,
   NearbyQuery,
   SearchQuery,
@@ -55,6 +56,10 @@ export const toSpotResponse = (spot: Spot): SpotResponse => ({
 });
 
 export class SpotService extends BaseUseCase {
+  /** Generous fixed cap (RFC-0012) — an abuse/cost guard, not a product
+   * meter; nobody curates 50 secret coves. */
+  private static readonly PRIVATE_SPOT_CAP = 50;
+
   constructor(
     private readonly spotRepository: SpotRepository,
     private readonly favoriteRepository: FavoriteRepository,
@@ -62,10 +67,13 @@ export class SpotService extends BaseUseCase {
     super();
   }
 
-  /** Published spot's geo for the weather domain (published-only). */
+  /** Spot geo for the weather domain: published, or private (RFC-0012 —
+   * the port carries no user context; the unguessable uuid IS the owner's
+   * capability, and the geo/conditions of a coordinate are not a secret the
+   * way the private spot's existence in lists would be). */
   async getGeoByUid(uid: string): Promise<SpotGeo> {
     const spot = await this.spotRepository.findByUid(uid);
-    if (spot?.status !== "published") {
+    if (spot?.status !== "published" && spot?.status !== "private") {
       throw new GenericError("NOT_FOUND", {
         reason: SpotReason.NOT_FOUND,
         message: "Spot not found",
@@ -80,39 +88,80 @@ export class SpotService extends BaseUseCase {
     };
   }
 
-  /** The weather hot set (D-004): distinct favorited published spots. */
+  /** The weather hot set (D-004): distinct favorited spots — published,
+   * plus favorited private rows (RFC-0012). */
   async listHotSpotGeos(): Promise<SpotGeo[]> {
     return this.favoriteRepository.listDistinctFavoritedSpotGeos();
   }
 
   async nearby(
     query: NearbyQuery,
+    user?: RequestUser,
   ): Promise<Array<SpotResponse & { distanceKm: number }>> {
-    const rows = await this.spotRepository.findNearby(query);
+    const rows = await this.spotRepository.findNearby({
+      ...query,
+      visibleToUserId: user?.id,
+    });
     return rows.map((row: SpotWithDistance) => ({
       ...toSpotResponse(row),
       distanceKm: row.distanceKm,
     }));
   }
 
-  async search(query: SearchQuery): Promise<SpotResponse[]> {
+  async search(
+    query: SearchQuery,
+    user?: RequestUser,
+  ): Promise<SpotResponse[]> {
     const rows = await this.spotRepository.searchByName(
       query.q,
       query.limit,
       query.sport,
+      user?.id,
     );
     return rows.map(toSpotResponse);
   }
 
-  /** Public detail — published spots only (pending/rejected are hidden). */
-  async detail(uid: string): Promise<SpotResponse> {
+  /** Detail — published spots, plus the requester's own private spots
+   * (RFC-0012); pending/rejected and other users' private rows stay hidden. */
+  async detail(uid: string, user?: RequestUser): Promise<SpotResponse> {
     const spot = await this.spotRepository.findByUid(uid);
-    if (spot?.status !== "published") {
+    const visible =
+      spot?.status === "published" ||
+      (spot?.status === "private" && spot.createdBy === user?.id);
+    if (!spot || !visible) {
       throw new GenericError("NOT_FOUND", {
         reason: SpotReason.NOT_FOUND,
         message: "Spot not found",
       });
     }
+    return toSpotResponse(spot);
+  }
+
+  /** RFC-0012 private spot — save-on-intent: created the moment the user
+   * sets an alert on / favorites a virtual point, never by browsing. Owned
+   * by its creator, visible only to them, never moderated or published.
+   * The stored coordinate is the user's EXACT tap, not the grid key. */
+  async createPrivate(
+    user: RequestUser,
+    input: CreatePrivateSpotInput,
+  ): Promise<SpotResponse> {
+    const owned = await this.spotRepository.countPrivateByOwner(user.id);
+    if (owned >= SpotService.PRIVATE_SPOT_CAP) {
+      // CONFLICT, not FORM_ERROR: the payload is fine — the ACCOUNT is full.
+      throw new GenericError("CONFLICT", {
+        reason: SpotReason.PRIVATE_SPOT_LIMIT,
+        message: `Private spot limit reached (${SpotService.PRIVATE_SPOT_CAP})`,
+      });
+    }
+    const spot = await this.spotRepository.create({
+      name: input.name,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      supportedSports: [input.sport],
+      source: "user_private",
+      status: "private",
+      createdBy: user.id,
+    });
     return toSpotResponse(spot);
   }
 
@@ -160,8 +209,23 @@ export class SpotService extends BaseUseCase {
     return { taskId };
   }
 
-  /** Admin moderation — publish/reject + curate spot intelligence. */
+  /** Admin moderation — publish/reject + curate spot intelligence. Private
+   * rows are untouchable (RFC-0012): the schema already refuses `private`
+   * as a status VALUE; this guards the private row as a TARGET. */
   async moderate(uid: string, input: ModerateSpotInput): Promise<SpotResponse> {
+    const existing = await this.spotRepository.findByUid(uid);
+    if (!existing) {
+      throw new GenericError("NOT_FOUND", {
+        reason: SpotReason.NOT_FOUND,
+        message: "Spot not found",
+      });
+    }
+    if (existing.status === "private") {
+      throw new GenericError("FORBIDDEN", {
+        reason: SpotReason.NOT_FOUND,
+        message: "Private spots are never moderated",
+      });
+    }
     const updated = await this.spotRepository.updateByUid(uid, input);
     if (!updated) {
       throw new GenericError("NOT_FOUND", {

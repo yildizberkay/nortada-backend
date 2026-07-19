@@ -51,8 +51,24 @@ export const suggestSpotSchema = z.object({
 });
 export type SuggestSpotInput = z.infer<typeof suggestSpotSchema>;
 
+// RFC-0012 private spot: born from a virtual point the moment the user sets
+// an alert or favorites it (save-on-intent; there is no bare "save"). The
+// coordinate is the user's EXACT tap (`requested`), never the grid key.
+export const createPrivateSpotSchema = z.object({
+  name: z.string().min(2).max(200),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  sport,
+});
+export type CreatePrivateSpotInput = z.infer<typeof createPrivateSpotSchema>;
+
+// Moderation only ever sees/sets these — `private` is deliberately absent
+// on BOTH sides (RFC-0012: private spots are never moderated; an admin
+// must be able neither to list them nor to publish one).
+const moderationStatus = z.enum(["published", "pending", "rejected"]);
+
 export const adminSpotQuerySchema = z.object({
-  status: z.enum(spotStatusEnum.enumValues).default("pending"),
+  status: moderationStatus.default("pending"),
   limit: z.coerce.number().int().positive().max(200).default(50),
 });
 
@@ -71,7 +87,7 @@ export const ingestResponseSchema = z
 
 // Admin moderation — publish/reject + curate fields.
 export const moderateSpotSchema = z.object({
-  status: z.enum(spotStatusEnum.enumValues).optional(),
+  status: moderationStatus.optional(),
   name: z.string().min(2).max(200).optional(),
   country: z.string().max(100).nullable().optional(),
   region: z.string().max(100).nullable().optional(),

@@ -12,6 +12,7 @@ import type { HonoContext } from "@/types";
 import {
   adminSpotListResponseSchema,
   adminSpotQuerySchema,
+  createPrivateSpotSchema,
   favoriteSpotSchema,
   favoriteUidParamSchema,
   ingestResponseSchema,
@@ -46,7 +47,10 @@ spotRoute.get(
   }),
   zValidator("query", nearbyQuerySchema),
   async (c) => {
-    const spots = await getContainer().spotService.nearby(c.req.valid("query"));
+    const spots = await getContainer().spotService.nearby(
+      c.req.valid("query"),
+      c.var.user,
+    );
     return c.json(HTTPResponse.success({ spots }));
   },
 );
@@ -60,8 +64,32 @@ spotRoute.get(
   }),
   zValidator("query", searchQuerySchema),
   async (c) => {
-    const spots = await getContainer().spotService.search(c.req.valid("query"));
+    const spots = await getContainer().spotService.search(
+      c.req.valid("query"),
+      c.var.user,
+    );
     return c.json(HTTPResponse.success({ spots }));
+  },
+);
+
+// RFC-0012 private spot: save-on-intent — the app calls this as the first
+// half of "set alert here" / "favorite here" on a virtual point; browsing
+// alone never creates one. Owned by the caller, visible only to them.
+spotRoute.post(
+  "/private",
+  describeRoute({
+    operationId: "createPrivateSpot",
+    tags: ["spot"],
+    responses: jsonResponse(successResponseSchema(spotResponseSchema)),
+  }),
+  rateLimit({ windowMs: 60_000, max: 10, keyPrefix: "spot-private" }),
+  zValidator("json", createPrivateSpotSchema),
+  async (c) => {
+    const spot = await getContainer().spotService.createPrivate(
+      c.var.user,
+      c.req.valid("json"),
+    );
+    return c.json(HTTPResponse.success(spot));
   },
 );
 
@@ -94,6 +122,7 @@ spotRoute.get(
   async (c) => {
     const spot = await getContainer().spotService.detail(
       c.req.valid("param").uid,
+      c.var.user,
     );
     return c.json(HTTPResponse.success(spot));
   },

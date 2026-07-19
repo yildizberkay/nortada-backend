@@ -13,8 +13,10 @@ export class FavoriteRepository extends BaseRepository {
   }
 
   /**
-   * Distinct PUBLISHED spots favorited by anyone — the weather hot set (D-004).
-   * A spot favorited by many users appears once.
+   * Distinct favorited spots — the weather hot set (D-004). A spot favorited
+   * by many users appears once. Private rows ride along (RFC-0012: only
+   * their owner can favorite them, and a favorited private spot deserves the
+   * same cron freshness as a catalog one); pending/rejected stay out.
    */
   async listDistinctFavoritedSpotGeos(): Promise<SpotGeo[]> {
     return this.dbClient
@@ -27,7 +29,7 @@ export class FavoriteRepository extends BaseRepository {
       })
       .from(favoriteTable)
       .innerJoin(spotTable, eq(favoriteTable.spotId, spotTable.id))
-      .where(eq(spotTable.status, "published"));
+      .where(inArray(spotTable.status, ["published", "private"]));
   }
 
   /** The user's favorited spots, most-recently-favorited first. */

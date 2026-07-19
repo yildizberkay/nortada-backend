@@ -166,12 +166,17 @@ export const spotSourceEnum = pgEnum("spot_source", [
   "osm",
   "curated",
   "user_suggested",
+  // RFC-0012: born from a map tap on alert/favorite — never moderated.
+  "user_private",
 ]);
 
 export const spotStatusEnum = pgEnum("spot_status", [
   "published",
   "pending",
   "rejected",
+  // RFC-0012: owned by `createdBy`, visible ONLY to that user, never
+  // published ("sahip varsa private").
+  "private",
 ]);
 
 // Multi-valued venue type — a place can be several at once (a school on a public

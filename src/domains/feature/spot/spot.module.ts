@@ -23,9 +23,13 @@ export function createSpotModule({ db }: ModuleDeps) {
     spotRepository,
   );
 
-  // Merge hook (D-008): favorites move to the target account on link.
-  const favoriteReassigner: MergeReassigner = (from, to, tx) =>
-    favoriteRepository.reassignOwner(from, to, tx);
+  // Merge hook (D-008): favorites AND private spots (RFC-0012) move to the
+  // target account on link — a stranded `createdBy` would hide every
+  // private row from its owner forever.
+  const favoriteReassigner: MergeReassigner = async (from, to, tx) => {
+    await favoriteRepository.reassignOwner(from, to, tx);
+    await spotRepository.reassignPrivateOwner(from, to, tx);
+  };
 
   return {
     spotService,

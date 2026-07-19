@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm";
 
 import type { DBManager, NewSpot, Spot } from "@/db";
+import type { DBExecutor } from "@/db/db.manager";
 import { spotTable } from "@/db/schema";
 import { BaseRepository } from "@/domains/platform/foundation";
 import { boundingBox, longitudeRanges } from "@/packages/geo";
@@ -56,7 +57,22 @@ export interface NearbyParams {
   radiusKm: number;
   sport?: Spot["supportedSports"][number];
   limit: number;
+  /** RFC-0012: also surface THIS user's private spots (owner-only rows). */
+  visibleToUserId?: number;
 }
+
+/** Published rows, plus the requesting user's own private rows (RFC-0012:
+ * private spots are visible only to their owner, everywhere). */
+const visibilityFilter = (visibleToUserId?: number): SQL | undefined =>
+  visibleToUserId == null
+    ? eq(spotTable.status, "published")
+    : or(
+        eq(spotTable.status, "published"),
+        and(
+          eq(spotTable.status, "private"),
+          eq(spotTable.createdBy, visibleToUserId),
+        ),
+      );
 
 export class SpotRepository extends BaseRepository {
   constructor(externalDBManager?: DBManager) {
@@ -64,12 +80,13 @@ export class SpotRepository extends BaseRepository {
   }
 
   /**
-   * Published spots within `radiusKm`, nearest first. Cheap `(lat, lon)` bbox
-   * pre-filter narrows the index scan; the exact haversine both orders and
-   * enforces the true circular radius. No PostGIS (D-003).
+   * Visible spots within `radiusKm` (published + the caller's own private
+   * rows), nearest first. Cheap `(lat, lon)` bbox pre-filter narrows the
+   * index scan; the exact haversine both orders and enforces the true
+   * circular radius. No PostGIS (D-003).
    */
   async findNearby(params: NearbyParams): Promise<SpotWithDistance[]> {
-    const { lat, lon, radiusKm, sport, limit } = params;
+    const { lat, lon, radiusKm, sport, limit, visibleToUserId } = params;
     const bb = boundingBox(lat, lon, radiusKm);
 
     // acos arg clamped to [-1, 1] to dodge float rounding domain errors.
@@ -89,7 +106,7 @@ export class SpotRepository extends BaseRepository {
     );
 
     const filters: (SQL | undefined)[] = [
-      eq(spotTable.status, "published"),
+      visibilityFilter(visibleToUserId),
       gte(spotTable.latitude, bb.latMin),
       lte(spotTable.latitude, bb.latMax),
       lonFilter,
@@ -111,18 +128,49 @@ export class SpotRepository extends BaseRepository {
     q: string,
     limit: number,
     sport?: Spot["supportedSports"][number],
+    visibleToUserId?: number,
   ): Promise<Spot[]> {
     // Escape LIKE wildcards so a user's `%`/`_`/`\` are literal, not match-all.
     const escaped = q.replace(/[\\%_]/g, "\\$&");
     return this.dbClient.query.spot.findMany({
       columns: spotColumns,
       where: and(
-        eq(spotTable.status, "published"),
+        visibilityFilter(visibleToUserId),
         ilike(spotTable.name, `%${escaped}%`),
         sport ? arrayContains(spotTable.supportedSports, [sport]) : undefined,
       ),
       limit,
     });
+  }
+
+  /** D-008 merge hook: private spots follow their owner onto the target
+   * account — without this, the visibility filter (`createdBy` match)
+   * strands every private row on the pre-link anonymous id. */
+  async reassignPrivateOwner(
+    fromUserId: number,
+    toUserId: number,
+    tx: DBExecutor,
+  ): Promise<void> {
+    await tx
+      .update(spotTable)
+      .set({ createdBy: toUserId })
+      .where(
+        and(
+          eq(spotTable.status, "private"),
+          eq(spotTable.createdBy, fromUserId),
+        ),
+      );
+  }
+
+  /** How many private spots this user owns — the RFC-0012 cap guard. */
+  async countPrivateByOwner(userId: number): Promise<number> {
+    const [row] = await this.dbClient
+      .select({ count: sql<number>`count(*)::int` })
+      .from(spotTable)
+      .where(
+        and(eq(spotTable.status, "private"), eq(spotTable.createdBy, userId)),
+      );
+    return row?.count ?? 0;
   }
 
   async findByUid(uid: string): Promise<Spot | undefined> {

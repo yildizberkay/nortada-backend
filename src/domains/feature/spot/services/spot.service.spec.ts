@@ -58,6 +58,7 @@ const mockRepo = {
   create: jest.fn(),
   updateByUid: jest.fn(),
   bulkInsertOsmPending: jest.fn(),
+  countPrivateByOwner: jest.fn(),
 } as unknown as jest.Mocked<SpotRepository>;
 
 const mockFavoriteRepo = {
@@ -91,6 +92,19 @@ describe("SpotService", () => {
       expect(result[0]).not.toHaveProperty("id");
       expect(result[0]).not.toHaveProperty("osmId");
     });
+
+    it("passes the caller through for private-spot visibility (RFC-0012)", async () => {
+      mockRepo.findNearby.mockResolvedValue([]);
+
+      await service.nearby(
+        { lat: 38.3, lon: 26.4, radiusKm: 50, limit: 50 },
+        user,
+      );
+
+      expect(mockRepo.findNearby).toHaveBeenCalledWith(
+        expect.objectContaining({ visibleToUserId: user.id }),
+      );
+    });
   });
 
   describe("search", () => {
@@ -103,7 +117,12 @@ describe("SpotService", () => {
         limit: 20,
       });
 
-      expect(mockRepo.searchByName).toHaveBeenCalledWith("ala", 20, "windsurf");
+      expect(mockRepo.searchByName).toHaveBeenCalledWith(
+        "ala",
+        20,
+        "windsurf",
+        undefined,
+      );
       expect(result[0].uid).toBe("spot-1");
       expect(result[0]).not.toHaveProperty("id");
     });
@@ -125,6 +144,24 @@ describe("SpotService", () => {
       mockRepo.findByUid.mockResolvedValue(spotRow());
       const result = await service.detail("spot-1");
       expect(result.name).toBe("Alaçatı");
+    });
+
+    it("shows the owner their own private spot", async () => {
+      mockRepo.findByUid.mockResolvedValue(
+        spotRow({ status: "private", createdBy: user.id }),
+      );
+      const result = await service.detail("spot-1", user);
+      expect(result.status).toBe("private");
+    });
+
+    it("hides another user's private spot (404)", async () => {
+      mockRepo.findByUid.mockResolvedValue(
+        spotRow({ status: "private", createdBy: 999 }),
+      );
+      await expect(service.detail("spot-1", user)).rejects.toMatchObject({
+        errorCode: "NOT_FOUND",
+        options: { reason: SpotReason.NOT_FOUND },
+      });
     });
 
     it("hides a pending spot (404)", async () => {
@@ -223,6 +260,62 @@ describe("SpotService", () => {
         errorCode: "NOT_FOUND",
       });
     });
+
+    it("resolves a private spot (RFC-0012 — weather runs for its owner)", async () => {
+      mockRepo.findByUid.mockResolvedValue(
+        spotRow({ status: "private", createdBy: 7 }),
+      );
+      const geo = await service.getGeoByUid("spot-1");
+      expect(geo.uid).toBe("spot-1");
+    });
+  });
+
+  describe("createPrivate (RFC-0012)", () => {
+    it("creates an owned private row from the exact tapped coordinate", async () => {
+      mockRepo.countPrivateByOwner.mockResolvedValue(0);
+      mockRepo.create.mockResolvedValue(
+        spotRow({
+          status: "private",
+          source: "user_private",
+          createdBy: user.id,
+        }),
+      );
+
+      const result = await service.createPrivate(user, {
+        name: "Gizli Koy",
+        latitude: 40.98765,
+        longitude: 29.03214,
+        sport: "windsurf",
+      });
+
+      expect(mockRepo.create).toHaveBeenCalledWith({
+        name: "Gizli Koy",
+        latitude: 40.98765,
+        longitude: 29.03214,
+        supportedSports: ["windsurf"],
+        source: "user_private",
+        status: "private",
+        createdBy: user.id,
+      });
+      expect(result.status).toBe("private");
+    });
+
+    it("rejects past the per-user cap", async () => {
+      mockRepo.countPrivateByOwner.mockResolvedValue(50);
+
+      await expect(
+        service.createPrivate(user, {
+          name: "Bir Koy Daha",
+          latitude: 40,
+          longitude: 29,
+          sport: "windsurf",
+        }),
+      ).rejects.toMatchObject({
+        errorCode: "CONFLICT",
+        options: { reason: SpotReason.PRIVATE_SPOT_LIMIT },
+      });
+      expect(mockRepo.create).not.toHaveBeenCalled();
+    });
   });
 
   describe("listHotSpotGeos", () => {
@@ -248,6 +341,7 @@ describe("SpotService", () => {
 
   describe("moderate", () => {
     it("updates and returns the spot", async () => {
+      mockRepo.findByUid.mockResolvedValue(spotRow({ status: "pending" }));
       mockRepo.updateByUid.mockResolvedValue(spotRow({ status: "published" }));
       const result = await service.moderate("spot-1", { status: "published" });
       expect(result.status).toBe("published");
@@ -257,10 +351,21 @@ describe("SpotService", () => {
     });
 
     it("throws when the spot is missing", async () => {
-      mockRepo.updateByUid.mockResolvedValue(undefined as never);
+      mockRepo.findByUid.mockResolvedValue(undefined as never);
       await expect(
         service.moderate("nope", { status: "published" }),
       ).rejects.toMatchObject({ errorCode: "NOT_FOUND" });
+      expect(mockRepo.updateByUid).not.toHaveBeenCalled();
+    });
+
+    it("refuses to touch a private spot (RFC-0012)", async () => {
+      mockRepo.findByUid.mockResolvedValue(
+        spotRow({ status: "private", createdBy: 42 }),
+      );
+      await expect(
+        service.moderate("spot-1", { status: "published" }),
+      ).rejects.toMatchObject({ errorCode: "FORBIDDEN" });
+      expect(mockRepo.updateByUid).not.toHaveBeenCalled();
     });
   });
 });

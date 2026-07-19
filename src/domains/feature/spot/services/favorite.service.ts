@@ -21,9 +21,11 @@ export class FavoriteService extends BaseUseCase {
   }
 
   async add(user: RequestUser, spotUid: string): Promise<SpotResponse> {
-    // Only published spots can be favorited (a pending/rejected spot must not
-    // leak into the list or the weather hot-set, D-004).
-    const spot = await this.resolveSpot(spotUid, true);
+    // Favoritable: published spots, or the user's OWN private spot
+    // (RFC-0012 — favoriting is one of the two gestures that make a
+    // private spot matter). Pending/rejected must not leak into the list
+    // or the weather hot-set (D-004).
+    const spot = await this.resolveSpot(spotUid, user, true);
     const added = await this.favoriteRepository.add(user.id, spot.id);
     if (!added) {
       throw new GenericError("ALREADY_EXISTS", {
@@ -37,7 +39,7 @@ export class FavoriteService extends BaseUseCase {
   async remove(user: RequestUser, spotUid: string): Promise<void> {
     // Unfavoriting allows any status — a spot that was later unpublished must
     // still be removable so the user isn't stranded with a dead favorite.
-    const spot = await this.resolveSpot(spotUid, false);
+    const spot = await this.resolveSpot(spotUid, user, false);
     const removed = await this.favoriteRepository.remove(user.id, spot.id);
     if (!removed) {
       throw new GenericError("NOT_FOUND", {
@@ -47,9 +49,16 @@ export class FavoriteService extends BaseUseCase {
     }
   }
 
-  private async resolveSpot(spotUid: string, requirePublished: boolean) {
+  private async resolveSpot(
+    spotUid: string,
+    user: RequestUser,
+    requireFavoritable: boolean,
+  ) {
     const spot = await this.spotRepository.findByUid(spotUid);
-    if (!spot || (requirePublished && spot.status !== "published")) {
+    const favoritable =
+      spot?.status === "published" ||
+      (spot?.status === "private" && spot.createdBy === user.id);
+    if (!spot || (requireFavoritable && !favoritable)) {
       throw new GenericError("NOT_FOUND", {
         reason: SpotReason.NOT_FOUND,
         message: "Spot not found",

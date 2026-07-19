@@ -60,6 +60,33 @@ describe("FavoriteService", () => {
         options: { reason: SpotReason.ALREADY_FAVORITED },
       });
     });
+
+    it("lets the owner favorite their own private spot (RFC-0012)", async () => {
+      mockSpotRepo.findByUid.mockResolvedValue({
+        ...spot,
+        status: "private",
+        createdBy: user.id,
+      } as Spot);
+      mockFavoriteRepo.add.mockResolvedValue(true);
+
+      const result = await service.add(user, "spot-1");
+
+      expect(result.status).toBe("private");
+    });
+
+    it("hides another user's private spot behind NOT_FOUND", async () => {
+      mockSpotRepo.findByUid.mockResolvedValue({
+        ...spot,
+        status: "private",
+        createdBy: 999,
+      } as Spot);
+
+      await expect(service.add(user, "spot-1")).rejects.toMatchObject({
+        errorCode: "NOT_FOUND",
+        options: { reason: SpotReason.NOT_FOUND },
+      });
+      expect(mockFavoriteRepo.add).not.toHaveBeenCalled();
+    });
   });
 
   describe("remove", () => {
