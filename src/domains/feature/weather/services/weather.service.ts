@@ -24,9 +24,20 @@ import {
 } from "../decision";
 import { WeatherReason } from "../errors";
 import type { WeatherRepository } from "../repositories/weather.repository";
-import type { WeatherQuery } from "../schemas";
+import type { VirtualSpotQuery, WeatherQuery } from "../schemas";
 
 type Sport = SpotGeo["supportedSports"][number];
+
+/** RFC-0012 cache/scoring grid step: 0.01° (~1.1 km) — finer than any weather
+ * model's grid, so rounding a tap onto it costs no forecast fidelity while
+ * nearby taps share one cache row. */
+const VIRTUAL_GRID_DECIMALS = 2;
+
+/** Round a coordinate onto the virtual-spot grid (RFC-0012 `gridKey`). */
+export function virtualGridKey(latitude: number, longitude: number) {
+  const snap = (value: number) => Number(value.toFixed(VIRTUAL_GRID_DECIMALS));
+  return { latitude: snap(latitude), longitude: snap(longitude) };
+}
 
 const FORECAST_TTL_MS = 60 * 60 * 1000; // 1h — the "now" tick wants freshness
 const MARINE_TTL_MS = 3 * 60 * 60 * 1000; // 3h — waves move slower
@@ -98,6 +109,61 @@ export class WeatherService extends BaseUseCase {
 
   async getConditions(spotUid: string, query: WeatherQuery) {
     const spot = await this.spotPort.getGeoByUid(spotUid);
+    return this.conditionsFor(spot, query);
+  }
+
+  /** RFC-0012 virtual spot: spot-grade conditions for a bare coordinate. The
+   * engine runs on the GRID key (nearby taps share one cache row, keyed by
+   * the synthetic `virtual:` uid — no spot row is read or written, so
+   * viewing leaves no trace); the response echoes both coordinates. */
+  async getConditionsAt(query: VirtualSpotQuery) {
+    const gridKey = virtualGridKey(query.lat, query.lon);
+    const conditions = await this.conditionsFor(this.virtualGeo(gridKey), {
+      sport: query.sport,
+    });
+    return {
+      coordinates: {
+        requested: { latitude: query.lat, longitude: query.lon },
+        gridKey,
+      },
+      conditions,
+    };
+  }
+
+  /** RFC-0012 virtual spot: the forecast sibling of `getConditionsAt`. */
+  async getForecastAt(query: VirtualSpotQuery) {
+    const gridKey = virtualGridKey(query.lat, query.lon);
+    const forecast = await this.forecastFor(this.virtualGeo(gridKey), {
+      sport: query.sport,
+    });
+    return {
+      coordinates: {
+        requested: { latitude: query.lat, longitude: query.lon },
+        gridKey,
+      },
+      forecast,
+    };
+  }
+
+  /** A `SpotGeo`-shaped stand-in for a coordinate with no catalog row: no
+   * shoreline (windSide stays null, the offshore advisory honestly absent)
+   * and no supported-sports default (the query's sport is required). */
+  private virtualGeo(gridKey: {
+    latitude: number;
+    longitude: number;
+  }): SpotGeo {
+    const lat = gridKey.latitude.toFixed(VIRTUAL_GRID_DECIMALS);
+    const lon = gridKey.longitude.toFixed(VIRTUAL_GRID_DECIMALS);
+    return {
+      uid: `virtual:${lat},${lon}`,
+      latitude: gridKey.latitude,
+      longitude: gridKey.longitude,
+      shoreBearingDeg: null,
+      supportedSports: [],
+    };
+  }
+
+  private async conditionsFor(spot: SpotGeo, query: WeatherQuery) {
     const sport = this.resolveSport(spot, query.sport);
 
     const fc = await this.getOrFetchForecast(spot);
@@ -134,7 +200,7 @@ export class WeatherService extends BaseUseCase {
     );
 
     return {
-      spotUid,
+      spotUid: spot.uid,
       sport,
       utcOffsetSeconds: forecast.utcOffsetSeconds,
       current: { ...current, windSide: side },
@@ -180,6 +246,10 @@ export class WeatherService extends BaseUseCase {
 
   async getForecast(spotUid: string, query: WeatherQuery) {
     const spot = await this.spotPort.getGeoByUid(spotUid);
+    return this.forecastFor(spot, query);
+  }
+
+  private async forecastFor(spot: SpotGeo, query: WeatherQuery) {
     const sport = this.resolveSport(spot, query.sport);
     const fc = await this.getOrFetchForecast(spot);
     const h = fc.payload.hourly;
@@ -205,7 +275,7 @@ export class WeatherService extends BaseUseCase {
 
     const freshness = this.freshness(fc, await this.modelMeta());
     return {
-      spotUid,
+      spotUid: spot.uid,
       sport,
       utcOffsetSeconds: fc.payload.utcOffsetSeconds,
       hourly,

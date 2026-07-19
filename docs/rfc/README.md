@@ -20,6 +20,7 @@ Ordered by dependency. Each step builds on the previous one.
 | **5** | [0006](0006-activity.md) | Activity / Session (4-layer storage, gzip track upload to S3, canonical GPS metrics, efforts, equipment) | feature/activity | ✅ Completed (P0) |
 | **6** | [0010](0010-today-briefing.md) | Today Briefing (ranked top pick + alternatives + state + decision reasons, composed over favorites × conditions) | feature/briefing | ✅ Completed |
 | **7** | [0011](0011-weather-map-pipeline.md) | Weather-Map PNG Pipeline (per-valid-hour layer textures — wind/temp/precip/snow — rendered from `.om` runs → R2, manifest API) | feature/weathermap | ✅ Completed |
+| **8** | [0012](0012-virtual-and-private-spots.md) | Virtual & Private Spots (spot-grade verdicts for any coordinate; user-owned spots born only on alert/favorite) | feature/spot, feature/alerts | 🚧 In Progress |
 | _later_ | [0007](0007-insights.md) | Insights (records, trends & aggregates across sessions) | feature/insights | 🗓️ Deferred |
 | _later_ | [0008](0008-alerts.md) | Condition Alerts (subscriptions + evaluation cron + push) | feature/alerts | 🗓️ Deferred |
 | _last_ | [0009](0009-subscription-notification.md) | Subscriptions (RevenueCat) & Push Notifications (APNs) | feature/subscription, platform/notification | 🗓️ Deferred |

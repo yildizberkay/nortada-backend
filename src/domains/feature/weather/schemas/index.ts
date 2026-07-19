@@ -39,6 +39,15 @@ export const batchConditionsQuerySchema = z.object({
 });
 export type BatchConditionsQuery = z.infer<typeof batchConditionsQuerySchema>;
 
+// RFC-0012 virtual spot: spot-grade verdict for a bare coordinate. Sport is
+// REQUIRED — a coordinate has no supported-sports list to default from.
+export const virtualSpotQuerySchema = z.object({
+  lat: z.coerce.number().min(-90).max(90),
+  lon: z.coerce.number().min(-180).max(180),
+  sport,
+});
+export type VirtualSpotQuery = z.infer<typeof virtualSpotQuerySchema>;
+
 // ── Responses ─────────────────────────────────────────────────────────────────
 
 const freshnessSchema = z.object({
@@ -134,3 +143,40 @@ export const batchConditionsResponseSchema = z
     "Conditions for a batch of spots; spots that could not be resolved are omitted",
   )
   .meta({ ref: "BatchConditionsResponse" });
+
+const coordinateSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+});
+
+// RFC-0012 two-coordinate contract: `requested` is the exact tap — what the
+// client displays and would persist; `gridKey` is the 0.01° rounding that
+// keyed cache + scoring (finer than any weather model's grid, so the
+// rounding costs no fidelity).
+const virtualCoordinatesSchema = z.object({
+  requested: coordinateSchema,
+  gridKey: coordinateSchema,
+});
+
+// Composition (NOT .extend): nesting the catalog schema keeps its $ref in
+// the OpenAPI document, so generated clients reuse the exact catalog types
+// for the payload instead of duplicating them per virtual schema.
+export const virtualConditionsResponseSchema = z
+  .object({
+    coordinates: virtualCoordinatesSchema,
+    conditions: conditionsResponseSchema,
+  })
+  .describe(
+    "Now-cast conditions + verdict for an arbitrary coordinate (virtual spot, RFC-0012); windSide is always null — a bare coordinate has no shoreline",
+  )
+  .meta({ ref: "VirtualConditionsResponse" });
+
+export const virtualForecastResponseSchema = z
+  .object({
+    coordinates: virtualCoordinatesSchema,
+    forecast: forecastResponseSchema,
+  })
+  .describe(
+    "Hourly + daily forecast strip for an arbitrary coordinate (virtual spot, RFC-0012)",
+  )
+  .meta({ ref: "VirtualForecastResponse" });

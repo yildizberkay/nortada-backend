@@ -8,7 +8,11 @@ import type {
 } from "@/packages/open-meteo";
 
 import type { WeatherRepository } from "../repositories/weather.repository";
-import { WeatherService, type WeatherSpotPort } from "./weather.service";
+import {
+  virtualGridKey,
+  WeatherService,
+  type WeatherSpotPort,
+} from "./weather.service";
 
 const geo: SpotGeo = {
   uid: "spot-1",
@@ -226,6 +230,78 @@ describe("WeatherService", () => {
 
       expect(mockClient.fetchForecast).toHaveBeenCalled();
       expect(result.utcOffsetSeconds).toBe(10_800);
+    });
+  });
+
+  describe("virtual spots (RFC-0012)", () => {
+    it("scores a bare coordinate on the grid key without touching the spot port", async () => {
+      mockRepo.findCache.mockResolvedValue(undefined as never);
+
+      const result = await service.getConditionsAt({
+        lat: 40.98765,
+        lon: 29.03214,
+        sport: "windsurf",
+      });
+
+      // Two-coordinate contract: requested echoes the exact tap, gridKey is
+      // the 0.01° rounding, and fetch/cache both run on the grid.
+      expect(result.coordinates.requested).toEqual({
+        latitude: 40.98765,
+        longitude: 29.03214,
+      });
+      expect(result.coordinates.gridKey).toEqual({
+        latitude: 40.99,
+        longitude: 29.03,
+      });
+      expect(mockClient.fetchForecast).toHaveBeenCalledWith(40.99, 29.03);
+      expect(mockRepo.upsertCache).toHaveBeenCalledWith(
+        expect.objectContaining({ spotUid: "virtual:40.99,29.03" }),
+      );
+      expect(mockSpotService.getGeoByUid).not.toHaveBeenCalled();
+      // No shoreline on a bare coordinate — windSide is honestly null.
+      expect(result.conditions.current.windSide).toBeNull();
+      expect(result.conditions.decision).toBe("go"); // 10 m/s windsurf
+      expect(result.conditions.spotUid).toBe("virtual:40.99,29.03");
+    });
+
+    it("returns the forecast strip for a bare coordinate", async () => {
+      mockRepo.findCache.mockResolvedValue(undefined as never);
+
+      const result = await service.getForecastAt({
+        lat: 40.98765,
+        lon: 29.03214,
+        sport: "windsurf",
+      });
+
+      expect(result.coordinates.gridKey).toEqual({
+        latitude: 40.99,
+        longitude: 29.03,
+      });
+      expect(result.forecast.sport).toBe("windsurf");
+      expect(result.forecast.hourly).toHaveLength(2);
+      expect(result.forecast.daily).toHaveLength(1);
+      expect(mockSpotService.getGeoByUid).not.toHaveBeenCalled();
+    });
+
+    it("propagates a provider failure when there is no cache to fall back on", async () => {
+      mockRepo.findCache.mockResolvedValue(undefined as never);
+      mockClient.fetchForecast.mockRejectedValue(new Error("open-meteo down"));
+
+      await expect(
+        service.getConditionsAt({ lat: 40.99, lon: 29.03, sport: "windsurf" }),
+      ).rejects.toThrow("open-meteo down");
+    });
+
+    it("snaps coordinates onto the 0.01° grid, negatives included", () => {
+      expect(virtualGridKey(40.987, 29.032)).toEqual({
+        latitude: 40.99,
+        longitude: 29.03,
+      });
+      expect(virtualGridKey(-33.8688, 151.2093)).toEqual({
+        latitude: -33.87,
+        longitude: 151.21,
+      });
+      expect(virtualGridKey(0, -0.004)).toEqual({ latitude: 0, longitude: -0 });
     });
   });
 

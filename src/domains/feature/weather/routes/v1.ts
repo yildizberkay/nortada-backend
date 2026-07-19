@@ -13,6 +13,9 @@ import {
   conditionsResponseSchema,
   forecastResponseSchema,
   spotUidParamSchema,
+  virtualConditionsResponseSchema,
+  virtualForecastResponseSchema,
+  virtualSpotQuerySchema,
   weatherQuerySchema,
 } from "../schemas";
 
@@ -51,6 +54,65 @@ weatherRoute.get(
       { sport },
     );
     return c.json(HTTPResponse.success(result));
+  },
+);
+
+// RFC-0012 virtual spot: the same spot-grade payloads for a bare coordinate —
+// no catalog row involved, nothing persisted by looking. Registered BEFORE
+// the /:uid routes so the static "virtual" segment wins the match.
+weatherRoute.get(
+  "/virtual/conditions",
+  describeRoute({
+    operationId: "getVirtualSpotConditions",
+    tags: ["weather"],
+    responses: {
+      200: {
+        description:
+          "Now-cast conditions + verdict for an arbitrary coordinate (virtual spot)",
+        content: {
+          "application/json": {
+            schema: resolver(
+              successResponseSchema(virtualConditionsResponseSchema),
+            ),
+          },
+        },
+      },
+    },
+  }),
+  zValidator("query", virtualSpotQuerySchema),
+  async (c) => {
+    const conditions = await getContainer().weatherService.getConditionsAt(
+      c.req.valid("query"),
+    );
+    return c.json(HTTPResponse.success(conditions));
+  },
+);
+
+weatherRoute.get(
+  "/virtual/forecast",
+  describeRoute({
+    operationId: "getVirtualSpotForecast",
+    tags: ["weather"],
+    responses: {
+      200: {
+        description:
+          "Hourly + daily forecast strip for an arbitrary coordinate (virtual spot)",
+        content: {
+          "application/json": {
+            schema: resolver(
+              successResponseSchema(virtualForecastResponseSchema),
+            ),
+          },
+        },
+      },
+    },
+  }),
+  zValidator("query", virtualSpotQuerySchema),
+  async (c) => {
+    const forecast = await getContainer().weatherService.getForecastAt(
+      c.req.valid("query"),
+    );
+    return c.json(HTTPResponse.success(forecast));
   },
 );
 
