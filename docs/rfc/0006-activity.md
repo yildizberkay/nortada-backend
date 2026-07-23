@@ -225,9 +225,13 @@ Routes mount at `/v1/activities` and `/v1/equipment`.
 - **Request:** `Content-Encoding: gzip` body of `createActivitySchema` (JSON). Key fields:
   `uid` (`z.string().uuid()`, **client-generated** → idempotent), `sport`, `source`
   (default `iphone`), `startedAt` (ISO), optional `endedAt`/`timezone`/`spotUid`/`spotName`/
-  device fields, `samples` (`array(sampleSchema).max(200_000)`), optional `conditions`
-  (forecast snapshot), optional `equipment` (`max(20)` of `{ equipmentUid, role? }`).
-  `sampleSchema` bounds `lat ∈ [-90,90]`, `lon ∈ [-180,180]`, `speed ≥ 0`, `hAccuracy ≥ 0`.
+  device fields, `samples` (`array(sampleSchema).max(200_000)`), optional `markers`
+  (`max(500)` of seconds-since-`startedAt` — the HUD's Mark button, same time axis as
+  `samples[].t`; added 2026-07-20), optional `conditions` (forecast snapshot), optional
+  `equipment` (`max(20)` of `{ equipmentUid, role? }`).
+  `sampleSchema` bounds `lat ∈ [-90,90]`, `lon ∈ [-180,180]`, `speed ≥ 0`, `hAccuracy ≥ 0`,
+  `course ∈ [0,360]` + `cAccuracy` (CoreLocation courseAccuracy, < 0 ⇒ invalid; the client
+  omits invalid courses, mirroring the `speed` convention; added 2026-07-20).
 - **Limits / hardening:** `rateLimit` 30/min keyed `activity-upload`; `bodyLimit`
   `maxSize = 24 MiB` (on the wire); gunzip is **async** with `maxOutputLength = 64 MiB`
   inflated (§7 — the DoS story).
@@ -240,7 +244,8 @@ Routes mount at `/v1/activities` and `/v1/equipment`.
   ```http
   POST /v1/activities   Content-Encoding: gzip
   { "uid":"7b1f…","sport":"windsurf","startedAt":"2026-07-11T09:00:00Z",
-    "samples":[{"t":0,"lat":38.30,"lon":26.36,"speed":9.8,"hAccuracy":4,"sAccuracy":0.6}, …],
+    "samples":[{"t":0,"lat":38.30,"lon":26.36,"speed":9.8,"hAccuracy":4,"sAccuracy":0.6,"course":312.4,"cAccuracy":5.1}, …],
+    "markers":[124.5, 1710.2],
     "conditions":{"windSpeedMs":11.3,"windDirectionDeg":315},
     "equipment":[{"equipmentUid":"…","role":"sail"}] }
   → 200 { "data": { "uid":"7b1f…", "status":"processing" } }
@@ -258,15 +263,17 @@ Routes mount at `/v1/activities` and `/v1/equipment`.
 
 - **Request (param):** `activityUidParamSchema` (`uid` uuid).
 - **Response:** `ActivityDetailResponse` — the activity's public fields + `summary`, `polyline`,
-  `efforts[]`, and `conditions[]`, assembled by four parallel repository reads.
+  `markers[]` (sorted, `[]` when none), `efforts[]`, and `conditions[]`, assembled by four
+  parallel repository reads.
 - **Errors:** `NOT_FOUND` (`ACTIVITY_NOT_FOUND`, 404) when the uid is not the caller's (reads
   are user-scoped, so another user's activity is indistinguishable from a missing one).
 
 ### PATCH /v1/activities/:uid — context
 
-- **Request:** `patchActivitySchema` — every field optional; `customName`, `notes`, `feeling`,
-  `tags`, `perceivedEffort` (`1..10`), `hiddenRadiusM` are `.nullable()`; `privacy`, `hideStart`.
-  Only provided keys are written (a `PATCH`, not a replace).
+- **Request:** `patchActivitySchema` — every field optional; `sport` corrects a misclassified
+  activity; `customName`, `notes`, `feeling`, `tags`, `perceivedEffort` (`1..10`) and
+  `hiddenRadiusM` are `.nullable()`; `privacy`, `hideStart`. Only provided keys are written
+  (a `PATCH`, not a replace).
 - **Response:** `204 No Content`. **Errors:** `NOT_FOUND` (404) when not the caller's.
 
 ### DELETE /v1/activities/:uid

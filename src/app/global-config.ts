@@ -20,8 +20,8 @@ export interface Config {
   clerk: {
     secretKey?: string;
     publishableKey?: string;
-    // Expected token-issuing frontends (azp check). Verifies a token was minted
-    // for our app, not another party in the Clerk instance.
+    // Expected web origins (azp check). Native Clerk tokens have no Origin/azp;
+    // this is not a bundle-ID allow-list.
     authorizedParties?: string[];
   };
 

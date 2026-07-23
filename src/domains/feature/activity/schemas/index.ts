@@ -21,6 +21,10 @@ const sampleSchema = z.object({
   hAccuracy: z.number().min(0).optional(),
   // CoreLocation speedAccuracy (m/s); < 0 means the Doppler speed is invalid.
   sAccuracy: z.number().optional(),
+  // Course over ground (degrees, 0 = north) + CoreLocation courseAccuracy
+  // (< 0 means the course is invalid).
+  course: z.number().min(0).max(360).optional(),
+  cAccuracy: z.number().optional(),
 });
 
 // Forecast snapshot the app already showed the user (observed obs is a later
@@ -48,6 +52,9 @@ export const createActivitySchema = z.object({
   osVersion: z.string().max(60).optional(),
   appVersion: z.string().max(60).optional(),
   samples: z.array(sampleSchema).max(200_000),
+  // User-dropped markers (the HUD's Mark button) — seconds since startedAt,
+  // the same time axis as `samples[].t`.
+  markers: z.array(z.number().min(0)).max(500).optional(),
   conditions: conditionsSchema.optional(),
   equipment: z
     .array(
@@ -71,6 +78,7 @@ export const listActivitiesQuerySchema = z.object({
 });
 
 export const patchActivitySchema = z.object({
+  sport: sport.optional(),
   customName: z.string().max(200).nullable().optional(),
   notes: z.string().max(4000).nullable().optional(),
   feeling: z.string().max(60).nullable().optional(),
@@ -143,6 +151,7 @@ export const activityDetailResponseSchema = z
     notes: z.string().nullable(),
     summary: summarySchema,
     polyline: z.string().nullable(),
+    markers: z.array(z.number()).default([]),
     efforts: z.array(effortSchema),
     conditions: z
       .array(

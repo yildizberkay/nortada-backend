@@ -1,4 +1,5 @@
 import type { ModuleDeps } from "@/container";
+import type { MergeReassigner } from "@/types";
 
 import { UserProfileRepository } from "./repositories/user-profile.repository";
 import { UserProfileService } from "./services/user-profile.service";
@@ -6,5 +7,8 @@ import { UserProfileService } from "./services/user-profile.service";
 export function createUserModule({ db }: ModuleDeps) {
   const userProfileRepository = new UserProfileRepository(db);
   const userProfileService = new UserProfileService(userProfileRepository);
-  return { userProfileService };
+  const userProfileReassigner: MergeReassigner = async (from, to, tx) => {
+    await userProfileRepository.mergeIntoExistingAccount(from, to, tx);
+  };
+  return { userProfileService, userProfileReassigner };
 }

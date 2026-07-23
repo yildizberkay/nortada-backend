@@ -18,6 +18,8 @@ export interface Sample {
   speed?: number; // m/s
   hAccuracy?: number; // m
   sAccuracy?: number; // m/s (CoreLocation speedAccuracy; < 0 ⇒ invalid)
+  course?: number; // degrees, 0 = north (course over ground)
+  cAccuracy?: number; // degrees (CoreLocation courseAccuracy; < 0 ⇒ invalid)
 }
 
 // Reject samples worse than this horizontal accuracy (metres).

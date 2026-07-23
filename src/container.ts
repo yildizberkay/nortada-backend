@@ -35,9 +35,9 @@ export function buildContainer(db: DBManager) {
   //   const activity = createActivityModule({ ...deps, weatherService: weather.weatherService });
   const deps: ModuleDeps = { db };
 
-  // Spot is built before auth so its merge hook (favorites reassign, D-008) can
+  // Data-owning modules are built before auth so their merge hooks (D-008) can
   // be threaded into the auth module explicitly.
-  const user = createUserModule(deps);
+  const { userProfileReassigner, ...userServices } = createUserModule(deps);
   const spot = createSpotModule(deps);
   const { favoriteReassigner, ...spotServices } = spot;
   const { activityReassigner, ...activityServices } =
@@ -47,7 +47,11 @@ export function buildContainer(db: DBManager) {
   // can be threaded in explicitly.
   const auth = createAuthModule({
     ...deps,
-    mergeReassigners: [favoriteReassigner, activityReassigner],
+    mergeReassigners: [
+      userProfileReassigner,
+      favoriteReassigner,
+      activityReassigner,
+    ],
   });
   // Weather depends on spot (geo lookup + favorites hot set) — passed explicitly
   // as a minimal port (SpotService satisfies it).
@@ -64,13 +68,13 @@ export function buildContainer(db: DBManager) {
     ...deps,
     favoritePort: spotServices.favoriteService,
     spotPort: spotServices.spotService,
-    profilePort: user.userProfileService,
+    profilePort: userServices.userProfileService,
     weatherPort: weather.weatherService,
   });
 
   return {
     ...auth,
-    ...user,
+    ...userServices,
     ...spotServices,
     ...weather,
     ...weatherMap,

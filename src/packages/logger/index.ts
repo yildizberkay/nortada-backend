@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { logger as triggerLogger } from "@trigger.dev/sdk";
 import { pino } from "pino";
 
@@ -42,6 +44,7 @@ export function resolveLogLevel(
 }
 
 const level = resolveLogLevel();
+const pinoLevel = level === "silent" ? "silent" : PINO_LEVEL[level];
 
 // Pretty human-readable lines locally; raw single-line JSON everywhere else so
 // log collectors can parse fields. Never pretty inside Trigger workers or tests
@@ -51,20 +54,46 @@ const usePretty =
   !isTrigger() &&
   process.env.JEST_WORKER_ID === undefined;
 
+// Keep one shared, human-readable local log that both the developer and coding
+// agents can inspect. Module initialization happens once per server process, so
+// truncating here gives every fresh `npm run dev` / watcher restart a clean log.
+// Production, Trigger workers, and tests never touch the filesystem.
+const localLogPath = resolve(process.cwd(), ".logs", "development.log");
+if (usePretty) {
+  mkdirSync(dirname(localLogPath), { recursive: true });
+  writeFileSync(localLogPath, "");
+}
+
 const root = pino({
-  level: level === "silent" ? "silent" : PINO_LEVEL[level],
+  level: pinoLevel,
   timestamp: pino.stdTimeFunctions.isoTime,
   // Drop pino's default pid/hostname bindings — noise on a single-instance app.
   base: undefined,
   ...(usePretty
     ? {
         transport: {
-          target: "pino-pretty",
-          options: {
-            translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l",
-            messageFormat: "[{prefix}] {msg}",
-            ignore: "prefix",
-          },
+          targets: [
+            {
+              target: "pino-pretty",
+              level: pinoLevel,
+              options: {
+                translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l",
+                messageFormat: "[{prefix}] {msg}",
+                ignore: "prefix",
+              },
+            },
+            {
+              target: "pino-pretty",
+              level: pinoLevel,
+              options: {
+                colorize: false,
+                destination: localLogPath,
+                translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l",
+                messageFormat: "[{prefix}] {msg}",
+                ignore: "prefix",
+              },
+            },
+          ],
         },
       }
     : {}),

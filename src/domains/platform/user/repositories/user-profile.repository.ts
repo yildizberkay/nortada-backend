@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import type {
   DBManager,
@@ -7,6 +7,7 @@ import type {
   UserProfile,
   UserSportProfile,
 } from "@/db";
+import type { DBExecutor } from "@/db/db.manager";
 import { userProfileTable, userSportProfileTable } from "@/db/schema";
 import { BaseRepository } from "@/domains/platform/foundation";
 
@@ -132,5 +133,59 @@ export class UserProfileRepository extends BaseRepository {
       })
       .returning();
     return row;
+  }
+
+  /**
+   * Merge preferences from an anonymous identity into an existing account.
+   * The existing account is canonical: its global profile and per-sport rows
+   * win every collision. Anonymous rows only fill gaps, and losing source rows
+   * are removed instead of being stranded on the retired identity.
+   *
+   * Runs on the auth merge transaction so preference resolution, owned-data
+   * reassignment, token revocation, and source retirement commit atomically.
+   */
+  async mergeIntoExistingAccount(
+    fromUserId: number,
+    toUserId: number,
+    tx: DBExecutor,
+  ): Promise<void> {
+    const [targetProfile] = await tx
+      .select({ id: userProfileTable.id })
+      .from(userProfileTable)
+      .where(eq(userProfileTable.userId, toUserId))
+      .limit(1);
+
+    if (targetProfile) {
+      await tx
+        .delete(userProfileTable)
+        .where(eq(userProfileTable.userId, fromUserId));
+    } else {
+      await tx
+        .update(userProfileTable)
+        .set({ userId: toUserId })
+        .where(eq(userProfileTable.userId, fromUserId));
+    }
+
+    const targetSportProfiles = await tx
+      .select({ sport: userSportProfileTable.sport })
+      .from(userSportProfileTable)
+      .where(eq(userSportProfileTable.userId, toUserId));
+    const targetSports = targetSportProfiles.map(({ sport }) => sport);
+
+    if (targetSports.length > 0) {
+      await tx
+        .delete(userSportProfileTable)
+        .where(
+          and(
+            eq(userSportProfileTable.userId, fromUserId),
+            inArray(userSportProfileTable.sport, targetSports),
+          ),
+        );
+    }
+
+    await tx
+      .update(userSportProfileTable)
+      .set({ userId: toUserId })
+      .where(eq(userSportProfileTable.userId, fromUserId));
   }
 }

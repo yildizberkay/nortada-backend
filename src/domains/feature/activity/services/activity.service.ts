@@ -102,6 +102,9 @@ export class ActivityService extends BaseUseCase {
       startLon: first?.lon ?? null,
       endLat: last?.lat ?? null,
       endLon: last?.lon ?? null,
+      // Stored sorted — readers (timeline flags) assume time order, and the
+      // client contract doesn't promise it.
+      markers: input.markers ? [...input.markers].sort((a, b) => a - b) : null,
       device: input.device ?? null,
       deviceModel: input.deviceModel ?? null,
       osVersion: input.osVersion ?? null,
@@ -254,6 +257,7 @@ export class ActivityService extends BaseUseCase {
       notes: activity.notes,
       summary: toSummaryDto(summary ?? null),
       polyline: route?.polyline ?? null,
+      markers: activity.markers ?? [],
       efforts: efforts.map((e) => ({
         type: e.type,
         resultMs: e.resultMs,
@@ -270,6 +274,7 @@ export class ActivityService extends BaseUseCase {
     input: PatchActivityInput,
   ): Promise<void> {
     const patch: Partial<NewActivity> = {};
+    if (input.sport !== undefined) patch.sport = input.sport;
     if (input.customName !== undefined) patch.customName = input.customName;
     if (input.notes !== undefined) patch.notes = input.notes;
     if (input.feeling !== undefined) patch.feeling = input.feeling;

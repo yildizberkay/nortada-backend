@@ -48,6 +48,7 @@ const activityColumns = {
   startLon: true,
   endLat: true,
   endLon: true,
+  markers: true,
   device: true,
   deviceModel: true,
   osVersion: true,

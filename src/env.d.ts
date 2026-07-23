@@ -12,7 +12,8 @@ declare namespace NodeJS {
     // anonymous-only without Clerk configured.
     CLERK_SECRET_KEY?: string;
     CLERK_PUBLISHABLE_KEY?: string;
-    // Comma-separated authorized parties (azp) for Clerk session tokens.
+    // Comma-separated web origins for Clerk session-token azp checks.
+    // Native iOS tokens carry no azp; this is not a bundle-ID allow-list.
     CLERK_AUTHORIZED_PARTIES?: string;
 
     // Our own anonymous-device JWT signing secret (RFC-0002). HS256 — must be

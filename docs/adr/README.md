@@ -50,3 +50,5 @@ under a page.
 - [0006 — Wind strength is the only verdict parameter; direction is advisory-only](0006-wind-strength-is-the-only-verdict-parameter.md)
 - [0007 — GO is one wide band; skip means calm or storm-force, nothing else](0007-go-is-wide-skip-is-calm-or-storm.md)
 - [0008 — Windows are daylight-bound; sailing is exempt](0008-windows-are-daylight-bound-sailing-exempt.md)
+- [0009 — Registered profiles win anonymous merge conflicts; anonymous preferences fill gaps](0009-registered-profile-wins-anonymous-merge-conflicts.md)
+- [0010 — A linked device never re-bootstraps anonymously; the retired row remembers it](0010-linked-devices-never-rebootstrap-anonymously.md)

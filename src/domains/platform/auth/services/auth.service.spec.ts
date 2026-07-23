@@ -67,6 +67,7 @@ const mockRepo = {
   findById: jest.fn(),
   findByClerkUserId: jest.fn(),
   findByAnonymousDeviceId: jest.fn(),
+  findRetiredByAnonymousDeviceId: jest.fn(),
   createAnonymous: jest.fn(),
   createClerkUser: jest.fn(),
   tryUpgradeAnonymousToClerk: jest.fn(),
@@ -135,6 +136,9 @@ describe("AuthService", () => {
 
     it("creates a new anonymous user for an unknown device", async () => {
       mockRepo.findByAnonymousDeviceId.mockResolvedValue(undefined as never);
+      mockRepo.findRetiredByAnonymousDeviceId.mockResolvedValue(
+        undefined as never,
+      );
       const created = anonUser({ uid: "fresh-uid" });
       mockRepo.createAnonymous.mockResolvedValue(created);
 
@@ -143,6 +147,38 @@ describe("AuthService", () => {
       expect(mockRepo.createAnonymous).toHaveBeenCalledWith("new-device");
       const { payload } = await jwtVerify(result.accessToken, ANON_SECRET);
       expect(payload.sub).toBe("fresh-uid");
+    });
+
+    it("409s a device whose anonymous user was upgraded in place (ADR 0010)", async () => {
+      // Branch-1 retirement: same row, isAnonymous flipped, deviceId kept.
+      mockRepo.findByAnonymousDeviceId.mockResolvedValue(undefined as never);
+      mockRepo.findRetiredByAnonymousDeviceId.mockResolvedValue(
+        anonUser({ isAnonymous: false, clerkUserId: "clerk_abc" }),
+      );
+
+      await expect(service.issueAnonymous("device-123")).rejects.toMatchObject(
+        {
+          errorCode: "ALREADY_EXISTS",
+          options: { reason: AuthReason.DEVICE_ALREADY_LINKED },
+        },
+      );
+      expect(mockRepo.createAnonymous).not.toHaveBeenCalled();
+    });
+
+    it("409s a device whose anonymous user was merged away (ADR 0010)", async () => {
+      // Branch-2 retirement: mergedIntoUserId set, deviceId kept as memory.
+      mockRepo.findByAnonymousDeviceId.mockResolvedValue(undefined as never);
+      mockRepo.findRetiredByAnonymousDeviceId.mockResolvedValue(
+        anonUser({ mergedIntoUserId: 2 }),
+      );
+
+      await expect(service.issueAnonymous("device-123")).rejects.toMatchObject(
+        {
+          errorCode: "ALREADY_EXISTS",
+          options: { reason: AuthReason.DEVICE_ALREADY_LINKED },
+        },
+      );
+      expect(mockRepo.createAnonymous).not.toHaveBeenCalled();
     });
 
     it("fails loudly when the signing secret is not configured (worker wiring bug)", async () => {

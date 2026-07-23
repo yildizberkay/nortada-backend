@@ -301,6 +301,11 @@ kaybedilecek gerçek veri (favori/seans) olunca gerekli. Ölü satırlar ileride
 retired-user GC pass'iyle temizlenebilir (küçük teknik borç, not düşüldü).
 Formal ADR: [[decisions]] D-008.
 
+**2026-07-23 refinement — ADR 0009:** Hedef profil hâlâ her çakışmayı
+kazanır; ancak hedefte global profil veya belirli bir spor profili yoksa anonim
+satır artık hedefe taşınır. Çakışıp kaybeden anonim tercih satırları retired
+kullanıcıda ölü veri bırakmak yerine aynı merge transaction'ında silinir.
+
 ## 20. Profil GET: onboarded marker ✅ (review-driven)
 
 **Karar:** `GET /me/profile` profil satırı yoksa varsayılanları döner ama artık

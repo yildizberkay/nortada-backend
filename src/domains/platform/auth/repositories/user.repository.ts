@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
 
 import type { DBManager, NewUser, User } from "@/db";
 import type { DBExecutor } from "@/db/db.manager";
@@ -61,6 +61,15 @@ export class UserRepository extends BaseRepository {
 
   /** Only ever returns a LIVE anonymous row — a retired (merged) row is skipped
    * so a device that signed out of Clerk can re-bootstrap a fresh identity. */
+  /**
+   * The LIVE anonymous row for a device — still anonymous, not merged. Rows
+   * retired by a link keep their `anonymousDeviceId` as durable memory (see
+   * `findRetiredByAnonymousDeviceId`), so both retirement shapes must be
+   * excluded here: branch-1 upgrade flips `isAnonymous`, branch-2 merge sets
+   * `mergedIntoUserId`. Without the `isAnonymous` filter an upgraded row
+   * would satisfy `/anonymous` and let a bare deviceId mint tokens for a
+   * real account.
+   */
   async findByAnonymousDeviceId(
     anonymousDeviceId: string,
   ): Promise<User | undefined> {
@@ -68,7 +77,30 @@ export class UserRepository extends BaseRepository {
       columns: userColumns,
       where: and(
         eq(userTable.anonymousDeviceId, anonymousDeviceId),
+        eq(userTable.isAnonymous, true),
         isNull(userTable.mergedIntoUserId),
+      ),
+    });
+  }
+
+  /**
+   * The retired row for a device whose anonymous identity was linked into a
+   * Clerk account (upgraded in place OR merged away). Its existence is the
+   * server-side memory behind ADR 0010: this device may never re-bootstrap
+   * anonymously — `/anonymous` answers 409 and the client adopts its Clerk
+   * session instead.
+   */
+  async findRetiredByAnonymousDeviceId(
+    anonymousDeviceId: string,
+  ): Promise<User | undefined> {
+    return this.dbClient.query.user.findFirst({
+      columns: userColumns,
+      where: and(
+        eq(userTable.anonymousDeviceId, anonymousDeviceId),
+        or(
+          eq(userTable.isAnonymous, false),
+          isNotNull(userTable.mergedIntoUserId),
+        ),
       ),
     });
   }
@@ -133,9 +165,13 @@ export class UserRepository extends BaseRepository {
     values: Pick<NewUser, "clerkUserId" | "email" | "displayName">,
   ): Promise<User | null> {
     try {
+      // `anonymousDeviceId` deliberately survives the upgrade: it is the
+      // durable memory that this device was linked (ADR 0010). The flipped
+      // `isAnonymous` keeps it out of the live-device lookup, so it can never
+      // mint anonymous tokens for this now-real account.
       const [row] = await this.dbClient
         .update(userTable)
-        .set({ ...values, isAnonymous: false, anonymousDeviceId: null })
+        .set({ ...values, isAnonymous: false })
         .where(eq(userTable.id, userId))
         .returning();
       return row;
@@ -149,8 +185,9 @@ export class UserRepository extends BaseRepository {
 
   /**
    * Merge branch 2: a Clerk row already exists — retire the anonymous row by
-   * pointing it at the target AND freeing its `anonymousDeviceId` (so the same
-   * device can re-bootstrap later). Future domains will reassign owned records
+   * pointing it at the target. `anonymousDeviceId` deliberately stays on the
+   * retired row (ADR 0010): it is the memory that blocks this device from
+   * ever re-bootstrapping anonymously. Future domains will reassign owned records
    * (activities/favorites/alerts) to `targetUserId` before this marker is set;
    * see docs/otonom-kararlar.md for the cross-domain transaction plan.
    */
@@ -161,7 +198,7 @@ export class UserRepository extends BaseRepository {
   ): Promise<void> {
     await tx
       .update(userTable)
-      .set({ mergedIntoUserId: targetUserId, anonymousDeviceId: null })
+      .set({ mergedIntoUserId: targetUserId })
       .where(eq(userTable.id, anonymousUserId));
   }
 

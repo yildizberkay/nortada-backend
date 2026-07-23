@@ -3,11 +3,24 @@ import {
   TokenVerificationError,
   TokenVerificationErrorReason,
 } from "@clerk/backend/errors";
+import { decodeJwt } from "jose";
 
 import { BaseUseCase } from "@/domains/platform/foundation";
 import { GenericError } from "@/packages/error";
+import { createLogger } from "@/packages/logger";
 
 import { AuthReason } from "../errors";
+
+const logger = createLogger("clerk");
+
+const tokenAuthorizedParty = (token: string): string | undefined => {
+  try {
+    const azp = (decodeJwt(token) as { azp?: unknown }).azp;
+    return typeof azp === "string" ? azp : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 export interface ClerkIdentity {
   clerkUserId: string;
@@ -47,9 +60,17 @@ export class ClerkService extends BaseUseCase {
     }
 
     try {
+      // `authorizedParties` validates the web Origin carried in `azp`; it is
+      // not a native bundle-ID check. Clerk's native iOS session tokens do not
+      // carry `azp`, and Clerk's verification guide explicitly says to skip
+      // this check when the claim is absent. Signature, issuer, and time claims
+      // are still verified by `verifyToken` in both cases.
+      const hasAuthorizedParty = tokenAuthorizedParty(token) !== undefined;
       const payload = await verifyToken(token, {
         secretKey,
-        ...(authorizedParties?.length ? { authorizedParties } : {}),
+        ...(authorizedParties?.length && hasAuthorizedParty
+          ? { authorizedParties }
+          : {}),
       });
       const email = (payload as { email?: unknown }).email;
       return {
@@ -69,6 +90,25 @@ export class ClerkService extends BaseUseCase {
         });
       }
       if (error instanceof TokenVerificationError) {
+        let tokenMetadata: Record<string, unknown> = { readable: false };
+        try {
+          const payload = decodeJwt(token);
+          tokenMetadata = {
+            readable: true,
+            issuer: payload.iss,
+            audience: payload.aud,
+            authorizedParty: (payload as { azp?: unknown }).azp,
+            issuedAt: payload.iat,
+            expiresAt: payload.exp,
+          };
+        } catch {
+          // Verification already failed; diagnostic decoding must never mask it.
+        }
+        logger.debug("Clerk session token rejected", {
+          reason: error.reason,
+          configuredAuthorizedParties: authorizedParties,
+          token: tokenMetadata,
+        });
         throw new GenericError("UNAUTHENTICATED", {
           reason: AuthReason.INVALID_TOKEN,
           message: "Invalid Clerk session token",

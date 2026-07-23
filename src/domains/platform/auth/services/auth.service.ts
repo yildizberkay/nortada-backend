@@ -121,6 +121,20 @@ export class AuthService extends BaseUseCase {
   async issueAnonymous(deviceId: string): Promise<AnonymousAuthResult> {
     const existing =
       await this.userRepository.findByAnonymousDeviceId(deviceId);
+    if (!existing) {
+      // Anonymity is first-install-only, server-enforced (ADR 0010): a device
+      // whose anonymous user was linked into a Clerk account can never
+      // re-bootstrap. 409 tells the client to adopt its Clerk session (the
+      // interrupted-link recovery) or gate on login.
+      const retired =
+        await this.userRepository.findRetiredByAnonymousDeviceId(deviceId);
+      if (retired) {
+        throw new GenericError("ALREADY_EXISTS", {
+          reason: AuthReason.DEVICE_ALREADY_LINKED,
+          message: "This device's anonymous identity was linked to an account",
+        });
+      }
+    }
     const user =
       existing ?? (await this.userRepository.createAnonymous(deviceId));
 

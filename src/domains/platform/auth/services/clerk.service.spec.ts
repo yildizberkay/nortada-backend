@@ -16,20 +16,33 @@ const mockVerifyToken = verifyToken as jest.MockedFunction<typeof verifyToken>;
 
 // Access the injected mock config to toggle the Clerk secret per test.
 const config = (
-  globalConfig as unknown as { _config: { clerk: { secretKey?: string } } }
+  globalConfig as unknown as {
+    _config: {
+      clerk: { secretKey?: string; authorizedParties?: string[] };
+    };
+  }
 )._config;
+
+const tokenWithClaims = (claims: Record<string, unknown>) => {
+  const encode = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "RS256" })}.${encode(claims)}.signature`;
+};
 
 describe("ClerkService", () => {
   let service: ClerkService;
   let originalSecret: string | undefined;
+  let originalAuthorizedParties: string[] | undefined;
 
   beforeEach(() => {
     service = new ClerkService();
     originalSecret = config.clerk.secretKey;
+    originalAuthorizedParties = config.clerk.authorizedParties;
   });
 
   afterEach(() => {
     config.clerk.secretKey = originalSecret;
+    config.clerk.authorizedParties = originalAuthorizedParties;
   });
 
   it("returns the clerk identity from a verified token", async () => {
@@ -55,6 +68,31 @@ describe("ClerkService", () => {
     const identity = await service.verifyToken("good-token");
 
     expect(identity).toEqual({ clerkUserId: "clerk_123", email: undefined });
+  });
+
+  it("checks configured web origins when the token carries azp", async () => {
+    config.clerk.authorizedParties = ["https://app.example.com"];
+    mockVerifyToken.mockResolvedValue({ sub: "clerk_123" } as never);
+    const token = tokenWithClaims({ azp: "https://app.example.com" });
+
+    await service.verifyToken(token);
+
+    expect(mockVerifyToken).toHaveBeenCalledWith(token, {
+      secretKey: "test-clerk-secret",
+      authorizedParties: ["https://app.example.com"],
+    });
+  });
+
+  it("skips the web-origin check for native tokens without azp", async () => {
+    config.clerk.authorizedParties = ["https://app.example.com"];
+    mockVerifyToken.mockResolvedValue({ sub: "clerk_123" } as never);
+    const token = tokenWithClaims({ iss: "https://clerk.example.com" });
+
+    await service.verifyToken(token);
+
+    expect(mockVerifyToken).toHaveBeenCalledWith(token, {
+      secretKey: "test-clerk-secret",
+    });
   });
 
   it("throws CLERK_NOT_CONFIGURED when no secret key is set", async () => {

@@ -93,7 +93,16 @@ describe("ActivityService", () => {
       mockRepo.createActivity.mockResolvedValue(activityRow());
       mockRepo.trackExists.mockResolvedValue(false);
 
-      const result = await service.create(user, uploadInput);
+      const result = await service.create(user, {
+        ...uploadInput,
+        markers: [61, 12.5],
+      });
+
+      // The Mark-button offsets land on the activity row itself, sorted —
+      // readers assume time order and the client contract doesn't promise it.
+      expect(mockRepo.createActivity).toHaveBeenCalledWith(
+        expect.objectContaining({ markers: [12.5, 61] }),
+      );
 
       // Raw track goes to object storage; the DB row keeps only the key + count.
       expect(mockObjectStorage.put).toHaveBeenCalledWith(
@@ -122,6 +131,10 @@ describe("ActivityService", () => {
 
       await service.create(user, uploadInput);
 
+      // A marker-less upload persists an honest null, not [].
+      expect(mockRepo.createActivity).toHaveBeenCalledWith(
+        expect.objectContaining({ markers: null }),
+      );
       expect(mockObjectStorage.put).not.toHaveBeenCalled();
       expect(mockRepo.ingestTrack).not.toHaveBeenCalled();
       expect(mockTrigger).not.toHaveBeenCalled();
@@ -164,7 +177,9 @@ describe("ActivityService", () => {
     });
 
     it("assembles summary + efforts + conditions", async () => {
-      mockRepo.findByUidForUser.mockResolvedValue(activityRow());
+      mockRepo.findByUidForUser.mockResolvedValue(
+        activityRow({ markers: [12.5] }),
+      );
       mockRepo.findSummaryByActivityId.mockResolvedValue(undefined as never);
       mockRepo.findRouteByActivityId.mockResolvedValue({
         polyline: "abc",
@@ -177,16 +192,35 @@ describe("ActivityService", () => {
       const result = await service.detail(user, "act-1");
 
       expect(result.polyline).toBe("abc");
+      expect(result.markers).toEqual([12.5]);
       expect(result.efforts[0].type).toBe("time_10s");
       expect(result.summary).toBeNull();
+    });
+
+    it("defaults markers to [] when none were uploaded", async () => {
+      mockRepo.findByUidForUser.mockResolvedValue(activityRow());
+      mockRepo.findSummaryByActivityId.mockResolvedValue(undefined as never);
+      mockRepo.findRouteByActivityId.mockResolvedValue(undefined as never);
+      mockRepo.findEffortsByActivityId.mockResolvedValue([]);
+      mockRepo.findConditionsByActivityId.mockResolvedValue([]);
+
+      const result = await service.detail(user, "act-1");
+
+      expect(result.markers).toEqual([]);
     });
   });
 
   describe("patchContext", () => {
     it("only sends provided fields and 404s when missing", async () => {
       mockRepo.updateContext.mockResolvedValue(activityRow());
-      await service.patchContext(user, "act-1", { notes: "great session" });
+      await service.patchContext(user, "act-1", {
+        sport: "sailing",
+        customName: null,
+        notes: "great session",
+      });
       expect(mockRepo.updateContext).toHaveBeenCalledWith("act-1", 1, {
+        sport: "sailing",
+        customName: null,
         notes: "great session",
       });
 

@@ -31,9 +31,11 @@ D-002): Clerk owns the expensive, security-critical real logins (Apple server ve
 email/OTP, session/refresh rotation); we cheaply own the anonymous gap with our own HS256 JWT.
 Anonymous users are deliberately **not** Clerk users — Clerk bills per MAU and has no native
 anonymous concept, so millions of anonymous devices would be both costly and unsupported. The
-second load-bearing choice is the **merge model** ([[decisions]] D-008): device-local
-*preferences* are not carried across on merge, but real *owned data* (favorites, activities,
-equipment) is moved inside **one transaction** via a per-domain `MergeReassigner` port.
+second load-bearing choice is the **merge model** ([[decisions]] D-008, refined by
+[ADR 0009](../adr/0009-registered-profile-wins-anonymous-merge-conflicts.md)): the registered
+profile wins preference conflicts while anonymous preferences fill gaps; real *owned data*
+(favorites, activities, equipment) is moved inside **one transaction** via a per-domain
+`MergeReassigner` port.
 
 ## 2. Motivation & Context
 
@@ -358,6 +360,10 @@ MergeReassigner[] = [])`. The reassigners are injected at the composition root (
    id. One transaction ⇒ a partial failure never orphans or half-moves data (D-008). Return
    `target`.
 
+   The user-profile reassigner applies [ADR 0009](../adr/0009-registered-profile-wins-anonymous-merge-conflicts.md):
+   an existing target global profile wins; otherwise the anonymous one moves. Per-sport rows use
+   the same target-wins rule by sport, and non-conflicting anonymous rows fill target gaps.
+
 **Invariants & edges.**
 - **Idempotent bootstrap/provision:** `createAnonymous` / `createClerkUser` use `ON CONFLICT DO
   NOTHING` + re-read, so parallel first requests on cold launch converge on one row instead of a
@@ -527,6 +533,8 @@ Co-located specs, all deps mocked (RFC-0001 test harness injects a mock config s
   `INVALID_TOKEN`, `RemoteJWKFailedToLoad` → `CLERK_UNAVAILABLE`, and a raw network error →
   `CLERK_UNAVAILABLE`; and that `secretKey` + `authorizedParties` are threaded into
   `verifyToken`.
+- **`user-profile.repository.spec.ts`** — branch-2 preference collisions preserve the registered
+  target, while target-absent global/per-sport preferences are reassigned from the anonymous user.
 - **Pre-ship gate (RFC-0001):** `lint:biome:fix`, `lint:type`, `lint:imports` (the
   `platform → feature` ban must hold — `auth` importing a feature domain would fail here), `test`.
 
@@ -538,11 +546,11 @@ Co-located specs, all deps mocked (RFC-0001 test harness injects a mock config s
 - **Build all auth in-house (Apple server verification, email/OTP, session rotation).** Rejected —
   a large, never-ending security burden for a small team. Clerk absorbs the hardest, most
   security-sensitive parts.
-- **Carry device-local preferences across a branch-2 merge.** Rejected — the target account's own
-  profile should win (correct product behavior for a user who already set up elsewhere), and
-  standing up a cross-domain transaction just to move *preferences* is premature. Only **real
-  owned data** (favorites, activities) is moved; the orphaned anonymous `user_profile` row is
-  harmless dead data cleaned up by a future GC ([[decisions]] D-008, [[../otonom-kararlar]] §18).
+- **Let anonymous preferences overwrite a branch-2 target profile.** Rejected — the target
+  account's established profile is canonical. The refined policy preserves target conflicts but
+  moves anonymous global/per-sport rows where the target has no corresponding configuration;
+  losing source rows are removed rather than left as dead data
+  ([ADR 0009](../adr/0009-registered-profile-wins-anonymous-merge-conflicts.md)).
 - **Collapse every Clerk verification failure to 401.** Rejected — it blinds ops during an outage
   and traps users in a re-login loop. The infra-vs-token split (5xx-reported vs 401-silent) is the
   chosen behavior ([[../otonom-kararlar]] §14).
@@ -612,11 +620,13 @@ Co-located specs, all deps mocked (RFC-0001 test harness injects a mock config s
   ([[../otonom-kararlar]] §16). ✅
 - ~~No rate limit on the unauthenticated bootstrap endpoints~~ → IP fixed-window 60s/20 → 429 on
   `/anonymous` and `/link` ([[../otonom-kararlar]] §17). ✅
-- ~~What data moves on merge~~ → **preferences don't move, real owned data does** — a per-domain
-  `MergeReassigner` seam runs inside one transaction with `markMergedInto`. The seam went live with
+- ~~What data moves on merge~~ → **target preferences win conflicts; anonymous preferences fill
+  gaps; real owned data moves** — a per-domain `MergeReassigner` seam runs inside one transaction
+  with `markMergedInto`. The seam went live with
   the first owned data (favorites, RFC-0004: `favoriteReassigner` + dedup `reassignOwner`);
   activities + equipment (RFC-0006) plug in the same way ([[decisions]] D-008,
-  [[../otonom-kararlar]] §18, §22). ✅
+  [[../otonom-kararlar]] §18, §22); user-profile gap filling is specified by
+  [ADR 0009](../adr/0009-registered-profile-wins-anonymous-merge-conflicts.md). ✅
 - ~~Clerk email/displayName on provision~~ → the session token usually omits `email`, so these are
   null at provision; **RFC-0003** hydrates them from the Clerk User API
   ([[../otonom-kararlar]] §19). ⏸️

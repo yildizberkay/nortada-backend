@@ -632,6 +632,10 @@ export const activityTable = pgTable(
     endLat: doublePrecision("end_lat"),
     endLon: doublePrecision("end_lon"),
 
+    // User-dropped markers during the ride (Mark button) — seconds since
+    // startedAt, the same time axis as the stored track samples.
+    markers: doublePrecision("markers").array(),
+
     // Provenance
     device: text("device"),
     deviceModel: text("device_model"),
@@ -661,8 +665,8 @@ export type NewActivity = typeof activityTable.$inferInsert;
 // L0 — raw high-resolution GPS samples (immutable). One row per activity. The
 // samples themselves live in object storage (S3, gzipped JSON) — too big for
 // Postgres — and this row keeps only the pointer + count. `storageKey` resolves
-// to an array of { t, lat, lon, speed?, hAccuracy?, sAccuracy? }, canonical SI
-// (see the `Sample` interface in metrics.ts).
+// to an array of { t, lat, lon, speed?, hAccuracy?, sAccuracy?, course?,
+// cAccuracy? }, canonical SI (see the `Sample` interface in metrics.ts).
 export const activityTrackTable = pgTable("activity_track", {
   id: idColumn(),
   uid: uidColumn(),
